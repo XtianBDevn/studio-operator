@@ -5,6 +5,7 @@
 import { PrismaClient } from "@prisma/client"
 
 import { finalizeAnalysis, type AnalysisDraft, type StoredAnalysis } from "../src/lib/analysis"
+import { DEFAULT_AUTONOMY_SETTINGS } from "../src/lib/autonomy-policy"
 import { DEMO_SPECS, demoDeadline } from "../src/lib/demos"
 import { catalogPrices } from "../src/server/services/analyze-brief"
 import { mockOutputUrl } from "../src/server/services/providers"
@@ -107,10 +108,89 @@ function workflow(
   }
 }
 
+async function seedAutonomy() {
+  await prisma.autonomySettings.upsert({
+    where: { id: "studio" },
+    update: {},
+    create: {
+      id: "studio",
+      maxAutoSpendPerJobCents: DEFAULT_AUTONOMY_SETTINGS.maxAutoSpendPerJobCents,
+      maxAutoSpendPerRepairCents: DEFAULT_AUTONOMY_SETTINGS.maxAutoSpendPerRepairCents,
+      maxAttemptsJson: JSON.stringify(DEFAULT_AUTONOMY_SETTINGS.maxAttempts),
+      allowedFamiliesJson: JSON.stringify(DEFAULT_AUTONOMY_SETTINGS.allowedFamilies),
+      autoSendJson: JSON.stringify(DEFAULT_AUTONOMY_SETTINGS.autoSend),
+      shareConceptsAutomatically: DEFAULT_AUTONOMY_SETTINGS.shareConceptsAutomatically,
+      finalDeliveryRequiresApproval: DEFAULT_AUTONOMY_SETTINGS.finalDeliveryRequiresApproval,
+    },
+  })
+
+  const harbor = await prisma.clientAccount.findUnique({ where: { id: "account_harbor" } })
+  if (!harbor) {
+    await prisma.clientAccount.create({
+      data: {
+        id: "account_harbor",
+        name: "Harbor Atelier",
+        channel: "portal",
+        memory: {
+          create: {
+            logosJson: json(["Harbor Atelier wordmark"]),
+            colorsJson: json(["#1B3A4B", "#C4A574", "#E8EEF2"]),
+            fontsJson: json(["Newsreader", "Inter"]),
+            tone: "Quiet, precise, and hopeful after the storm.",
+            productDetails: "A coastal glass monument. Material, scale, and site stay consistent. No people.",
+            winningAssetsJson: json(["2024 harbor tour still, dusk, no people"]),
+            rejectedStylesJson: json(["Neon city", "Handheld chaos", "Product-ad typography"]),
+            deliveryPreferences: "16:9 and 9:16 masters plus three stills. A person sends the files.",
+            communicationPreferences: "First-party portal. Milestone updates only. No marketplace messages.",
+          },
+        },
+        consents: {
+          create: {
+            personLabel: "Harbor tour narrator",
+            kind: "voice",
+            useScope: "2024 harbor tour recap",
+          },
+        },
+        links: {
+          create: { jobId: "job_glass_monument", templateId: "launch_video" },
+        },
+      },
+    })
+  }
+
+  const lumen = await prisma.clientAccount.findUnique({ where: { id: "account_lumen" } })
+  if (!lumen) {
+    await prisma.clientAccount.create({
+      data: {
+        id: "account_lumen",
+        name: "Lumen Orchard",
+        channel: "portal",
+        memory: {
+          create: {
+            logosJson: json(["Lumen Orchard mark"]),
+            colorsJson: json(["#1A1A18", "#6B7C4A", "#D8C7A1"]),
+            fontsJson: json(["Fraunces"]),
+            tone: "Still, low, and unhurried.",
+            productDetails: "A night orchard. Atmosphere, low-light detail, and a smooth orbit.",
+            winningAssetsJson: json(["Approved orchard still, no people"]),
+            rejectedStylesJson: json(["Daylight commercial", "Fast whip pans"]),
+            deliveryPreferences: "One orbit master and one hero still.",
+            communicationPreferences: "First-party portal. Drafts wait for a person.",
+          },
+        },
+        links: {
+          create: { jobId: "job_night_orchard", templateId: "route_comparison" },
+        },
+      },
+    })
+  }
+}
+
 async function main() {
   const existing = await prisma.job.count()
   if (existing > 0) {
-    console.log(`Seed skipped: ${existing} job(s) already stored.`)
+    await seedAutonomy()
+    console.log(`Seed skipped: ${existing} job(s) already stored. Client memory was checked.`)
     return
   }
 
@@ -1067,7 +1147,9 @@ Budget $200. Tomorrow.`,
     })
   }
 
-  console.log("Seeded 9 jobs across the pipeline.")
+  await seedAutonomy()
+
+  console.log("Seeded 9 jobs, 2 client accounts, and autonomy settings.")
 }
 
 main()

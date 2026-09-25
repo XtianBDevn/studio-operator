@@ -9,6 +9,7 @@ import { defaultChannelFeeBps, isSourceId, type SourceId } from "@/lib/sources"
 import type { Decision, JobDetail } from "@/lib/types"
 import { estimatedGenerationCents, spentGenerationCents } from "@/lib/types"
 import { canRebuildPlan, hasOpenGate } from "@/lib/workflow-policy"
+import { clearJobSupervision } from "@/server/repositories/autonomy-repository"
 import type { JobRepository } from "@/server/repositories/job-repository"
 import { catalogPrices, produceAnalysis, targetMarginBpsFromEnv } from "@/server/services/analyze-brief"
 import { draftClientDeliveryNote } from "@/server/services/delivery-note"
@@ -925,6 +926,7 @@ export async function resetDemoJob(repo: JobRepository, jobId: string, now = new
   const job = await mustGet(repo, jobId)
   if (job.status === "generating") throw new StudioError("Wait until generation finishes before resetting.")
   await repo.clearProduction(jobId)
+  await clearJobSupervision(jobId)
   await repo.replaceAssets(jobId, spec.assets)
   await repo.updateJob(jobId, {
     status: "new",

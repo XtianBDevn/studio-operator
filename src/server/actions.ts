@@ -2,10 +2,16 @@
 
 import { redirect } from "next/navigation"
 
+import { CAPABILITIES } from "@/lib/analysis"
+import { MESSAGE_KINDS, type MessageKind } from "@/lib/autonomy-policy"
+import { consentCoversAny, type LikenessKind } from "@/lib/client-memory"
+import { ROUTE_ROLES, type RouteRole } from "@/lib/router-catalog"
 import { dollarsToCents } from "@/lib/money"
 import type { Decision } from "@/lib/types"
 import { runConnectionTest } from "@/server/connection-test"
+import { getAccount, saveAutonomySettings } from "@/server/repositories/autonomy-repository"
 import { jobs } from "@/server/repositories"
+import { advanceSupervision } from "@/server/supervise"
 import { redactSecrets } from "@/server/services/higgsfield/redact"
 import {
   addRevision,
@@ -368,6 +374,114 @@ export async function recordCommercialsAction(formData: FormData) {
     recordBack(jobId, { error: messageFrom(error) })
   }
   recordBack(jobId, { notice: "Margin assumptions updated." })
+}
+
+function superviseBack(jobId: string, params: Record<string, string>): never {
+  const search = new URLSearchParams(params)
+  redirect(`/supervise/${jobId}?${search.toString()}`)
+}
+
+export async function superviseContinueAction(formData: FormData) {
+  const jobId = readId(formData)
+  try {
+    await advanceSupervision(jobs, jobId)
+  } catch (error) {
+    if (error && typeof error === "object" && "digest" in error) throw error
+    superviseBack(jobId, { error: messageFrom(error) })
+  }
+  superviseBack(jobId, { notice: "Supervised step complete." })
+}
+
+export async function superviseResetAction(formData: FormData) {
+  const jobId = readId(formData)
+  try {
+    await resetDemoJob(jobs, jobId)
+  } catch (error) {
+    if (error && typeof error === "object" && "digest" in error) throw error
+    superviseBack(jobId, { error: messageFrom(error) })
+  }
+  superviseBack(jobId, { notice: "Demo reset. The supervised run starts again." })
+}
+
+export async function saveAutonomyAction(formData: FormData) {
+  try {
+    const maxAutoSpendPerJobCents = dollarsToCents(String(formData.get("maxJob") ?? ""))
+    const maxAutoSpendPerRepairCents = dollarsToCents(String(formData.get("maxRepair") ?? ""))
+    if (maxAutoSpendPerJobCents == null || maxAutoSpendPerRepairCents == null) {
+      throw new Error("Enter the automatic spend limits in dollars.")
+    }
+    const families = formData
+      .getAll("family")
+      .map(String)
+      .filter((role): role is RouteRole => (ROUTE_ROLES as readonly string[]).includes(role))
+    if (families.length === 0) throw new Error("Select at least one model family.")
+    const autoSend = formData
+      .getAll("autoSend")
+      .map(String)
+      .filter((kind): kind is MessageKind => (MESSAGE_KINDS as readonly string[]).includes(kind))
+    const maxAttempts = {
+      image: 8,
+      video: 12,
+      voice: 4,
+      editing: 3,
+      finishing: 4,
+    }
+    for (const capability of CAPABILITIES) {
+      const parsed = Number(formData.get(`attempt_${capability}`))
+      if (!Number.isInteger(parsed) || parsed < 0) throw new Error("Attempt limits are whole numbers.")
+      maxAttempts[capability] = parsed
+    }
+    await saveAutonomySettings({
+      maxAutoSpendPerJobCents,
+      maxAutoSpendPerRepairCents,
+      maxAttempts,
+      allowedFamilies: families,
+      autoSend,
+      shareConceptsAutomatically: formData.get("shareConcepts") === "yes",
+      finalDeliveryRequiresApproval: formData.get("finalDelivery") === "yes",
+    })
+  } catch (error) {
+    if (error && typeof error === "object" && "digest" in error) throw error
+    redirect(`/autonomy?error=${encodeURIComponent(messageFrom(error))}`)
+  }
+  redirect("/autonomy?notice=Autonomy%20settings%20saved.")
+}
+
+export async function consentCheckAction(formData: FormData) {
+  const accountId = String(formData.get("accountId") ?? "")
+  const personLabel = String(formData.get("personLabel") ?? "").trim()
+  const kind = String(formData.get("kind") ?? "")
+  const useScope = String(formData.get("useScope") ?? "").trim()
+  const back = (params: Record<string, string>) => {
+    const search = new URLSearchParams(params)
+    redirect(`/clients/${accountId}?${search.toString()}`)
+  }
+  try {
+    if (kind !== "likeness" && kind !== "voice") throw new Error("Choose likeness or voice.")
+    if (personLabel.length < 2 || useScope.length < 2) throw new Error("Name the person and the exact use.")
+    const account = await getAccount(accountId)
+    if (!account) throw new Error("Account not found.")
+    const covered = consentCoversAny(
+      account.consents
+        .filter((consent): consent is { id: string; personLabel: string; kind: LikenessKind; useScope: string } =>
+          consent.kind === "likeness" || consent.kind === "voice",
+        )
+        .map((consent) => ({
+          personLabel: consent.personLabel,
+          kind: consent.kind,
+          useScope: consent.useScope,
+        })),
+      { personLabel, kind, useScope },
+    )
+    back({
+      notice: covered
+        ? "Stored consent covers this person, this kind, and this exact use."
+        : "Stored consent does not cover this person or this use. An earlier approval does not carry over.",
+    })
+  } catch (error) {
+    if (error && typeof error === "object" && "digest" in error) throw error
+    back({ error: messageFrom(error) })
+  }
 }
 
 export async function noteAction(formData: FormData) {

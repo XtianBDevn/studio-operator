@@ -31,6 +31,9 @@ Do not invent model capabilities, prices, endpoints, or availability. Use only t
 
 Return only valid structured output matching the application's schema. Recommend accept only when the deliverable is clear, the assets and rights appear sufficient, the deadline is plausible, and the deterministic cost calculation can preserve the target margin. Recommend human_review when the job may be deliverable but a person must resolve ambiguity or risk. Recommend reject when the requested result cannot be produced reliably, legally, or profitably.`
 
+/** Operator system prompt for brief analysis and the client agent. */
+export const OPERATOR_SYSTEM_PROMPT = ANALYSIS_SYSTEM_PROMPT
+
 export type DeliverableSpec = {
   name: string
   format: string

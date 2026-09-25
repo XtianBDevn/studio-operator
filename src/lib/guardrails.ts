@@ -40,6 +40,10 @@ export const PRODUCT_GUARDRAILS = {
     "generation.run_within_limits",
     "qa.revision_notes",
     "delivery.record_internal",
+    "client.draft_message",
+    "client.send_first_party",
+    "autonomy.configure",
+    "autonomy.audit",
   ],
 } as const
 

@@ -56,6 +56,9 @@ export function RecordingDesk({
           <input type="hidden" name="jobId" value={job.id} />
           <SubmitButton variant="outline">Reset to seeded brief</SubmitButton>
         </form>
+        <Link href={`/supervise/${job.id}`} className="self-center text-sm underline-offset-2 hover:underline">
+          Supervised run
+        </Link>
         <Link href={`/jobs/${job.id}`} className="self-center text-sm underline-offset-2 hover:underline">
           Open the desk
         </Link>

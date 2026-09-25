@@ -28,6 +28,9 @@ export function AppHeader({
             {analysisProvider === "openai" ? "Astra live" : "Astra mock"} · {model}
             {mode === "live" ? " · Higgsfield live" : " · Higgsfield mock"}
           </p>
+          <Link href="/autonomy" className={cn(buttonVariants({ size: "sm", variant: "outline" }))}>
+            Autonomy
+          </Link>
           <Link href="/record" className={cn(buttonVariants({ size: "sm", variant: "outline" }))}>
             Recording
           </Link>

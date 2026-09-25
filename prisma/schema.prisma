@@ -234,3 +234,106 @@ model DeliveryNote {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 }
+
+// Supervised client agent. These records are not marketplace accounts.
+model AutonomySettings {
+  id                            String   @id
+  maxAutoSpendPerJobCents       Int
+  maxAutoSpendPerRepairCents    Int
+  maxAttemptsJson               String
+  allowedFamiliesJson           String
+  autoSendJson                  String
+  shareConceptsAutomatically    Boolean
+  finalDeliveryRequiresApproval Boolean
+  createdAt                     DateTime @default(now())
+  updatedAt                     DateTime @updatedAt
+}
+
+model ClientAccount {
+  id        String            @id
+  name      String
+  channel   String
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  memory    ClientMemory?
+  consents  LikenessConsent[]
+  links     ClientJobLink[]
+
+  @@index([name])
+}
+
+model ClientMemory {
+  id                         String        @id @default(cuid())
+  accountId                  String        @unique
+  account                    ClientAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  logosJson                  String        @default("[]")
+  colorsJson                 String        @default("[]")
+  fontsJson                  String        @default("[]")
+  tone                       String        @default("")
+  productDetails             String        @default("")
+  winningAssetsJson          String        @default("[]")
+  rejectedStylesJson         String        @default("[]")
+  deliveryPreferences        String        @default("")
+  communicationPreferences   String        @default("")
+  createdAt                  DateTime      @default(now())
+  updatedAt                  DateTime      @updatedAt
+}
+
+model LikenessConsent {
+  id          String        @id @default(cuid())
+  accountId   String
+  account     ClientAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  personLabel String
+  kind        String
+  useScope    String
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([accountId])
+}
+
+model ClientJobLink {
+  jobId      String        @id
+  accountId  String
+  templateId String
+  account    ClientAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@index([accountId])
+}
+
+model ClientMessage {
+  id          String   @id @default(cuid())
+  jobId       String
+  kind        String
+  channel     String
+  disposition String
+  body        String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([jobId])
+  @@index([disposition])
+}
+
+model AuditEvent {
+  id        String   @id @default(cuid())
+  jobId     String?
+  kind      String
+  summary   String
+  detail    String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([jobId])
+  @@index([kind])
+  @@index([createdAt])
+}
+
+model SuperviseCursor {
+  jobId     String   @id
+  beat      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

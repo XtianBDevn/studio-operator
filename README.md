@@ -35,7 +35,7 @@ npm i
 npm run dev
 ```
 
-Open http://localhost:3000. The recording demos are at http://localhost:3000/record.
+Open http://localhost:3000. The recording demos are at http://localhost:3000/record. Supervised autonomy is at http://localhost:3000/autonomy.
 
 `npm run dev` creates `.env` from `.env.example` when it is missing, applies the SQLite migration, and seeds the demo. No API keys are required. `STUDIO_OPERATOR_MODE=mock` is the default. The database file is `prisma/dev.db` (`DATABASE_URL=file:./dev.db`, resolved beside the Prisma schema).
 
@@ -45,6 +45,7 @@ Analysis uses GPT-6 Astra through the OpenAI Responses API when `OPENAI_API_KEY`
 npm run test:analysis
 npm run test:router
 npm run test:qa
+npm run test:autonomy
 npm run test:higgsfield
 npm run smoke
 ```
@@ -90,7 +91,7 @@ Contingency is a percent of estimated generation. The channel fee is a percent o
 - `src/server/services/higgsfield/` — REST adapter for estimate, submit, poll, and queued cancel
 - `src/app/connection/page.tsx` — confirmed connection test
 - `src/lib/guardrails.ts` — forbidden marketplace operations
-- `prisma/schema.prisma` — Job, BriefAnalysis, WorkflowStep, Generation, Revision, ApprovalGate, ConnectionTest, QaReport, DeliveryNote
+- `prisma/schema.prisma` — Job, BriefAnalysis, WorkflowStep, Generation, Revision, ApprovalGate, ConnectionTest, QaReport, DeliveryNote, AutonomySettings, ClientAccount, ClientMemory, LikenessConsent, ClientJobLink, ClientMessage, AuditEvent, SuperviseCursor
 
 To move to Postgres later, keep the repository interface and replace `PrismaJobRepository`. Do not call Prisma from the UI.
 
@@ -137,6 +138,20 @@ Recording mode (`/record`) is laid out for a desktop capture. It uses large stat
 
 `npm run test:qa` checks the checklist, the spend cap, the two routes, and the delivery note. `npm run test:router` still checks the earlier routing rules, including a rush deadline staying on Kling 3.0 Standard.
 
+## Supervised autonomy
+
+The client agent drafts the routine relationship and a person keeps the promises. Open **Autonomy** to set the automatic spend per job and per repair, the attempt caps, the allowed model families, which first-party messages may send themselves, whether concepts may be shared, and whether final delivery always needs a person. Likeness or voice, unclear ownership, factual claims, exact packaging or regulated copy, a negative margin, deadline risk, and a client dispute always pause. They are not switches.
+
+Proposals, change orders, and delivery packages stay drafts on email and the portal. Progress updates send on the first-party portal only when that message type is allowed. The same text is refused through a marketplace. The app does not scrape, auto-apply, send a proposal, accept a contract, or message through Upwork.
+
+**Service templates** define Launch Video, UGC Ad Pack, and Localization Pack: required inputs, file types, a catalog recipe, a quality checklist, included revisions, the delivery package, a 25% target margin, a production spend ceiling, and escalation conditions. Speak, lip sync, and caption tools are not in the catalog. Voice and captions stay on the desk. PixVerse V6 is the documented video-with-sound substitute, and a person still approves lip sync.
+
+**Client memory** stores logos, colors, fonts, tone, product details, winning assets, rejected styles, and delivery and communication preferences on the account. A stored voice consent covers one person and one use. Harbor Atelier’s narrator consent for the 2024 harbor tour does not cover a monument film or a different person.
+
+**After the Rain** (`/supervise/job_glass_monument`) walks one missing material question, a drafted proposal, a human scope approval, one portal milestone update, mock generation, one reflection and geometry repair inside the automatic cap, an included warmer-reveal revision, a blocked delivery, a human delivery approval, and a follow-up draft. **Night Orchard** (`/supervise/job_night_orchard`) compares its atmosphere route with Glass Monument, refuses a $90 repair that crosses the $45 automatic repair cap, and stops before delivery. Reset on either page, or on Recording, returns the seeded brief and clears that job’s messages and audit. Account memory stays.
+
+`npm run test:autonomy` checks the message rules, spend caps, consent matching, the three templates, and the operator prompt.
+
 ## Out of scope in this build
 
-Marketplace OAuth, proposal sending, and auth. Client-agent autonomy settings are a later prompt. Analysis calls OpenAI only when `OPENAI_API_KEY` is set. Live Higgsfield submit is limited to the two wired workflows above.
+Marketplace OAuth, sending proposals, accepting contracts, and auth. The client agent drafts those messages for a person. It does not perform them. Analysis calls OpenAI only when `OPENAI_API_KEY` is set. Live Higgsfield submit is limited to the two wired workflows above. A Seedance continuity repair stays a local preview.

@@ -35,6 +35,9 @@ export default async function HomePage() {
           </p>
         </div>
         <div className="flex gap-4">
+          <Link href="/autonomy" className="text-sm underline-offset-2 hover:underline">
+            Autonomy
+          </Link>
           <Link href="/record" className="text-sm underline-offset-2 hover:underline">
             Recording
           </Link>
