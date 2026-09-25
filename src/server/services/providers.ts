@@ -33,20 +33,12 @@ export function mockOutputUrl(input: { title: string; subtitle: string; kind: st
 }
 
 /**
- * Higgsfield generation stub.
- * Mock mode returns a local preview and never leaves the process.
- * Live mode throws before any network call. HIGGSFIELD_API_KEY is ignored here.
+ * Local preview used when STUDIO_OPERATOR_MODE is mock.
+ * Live mode throws here, before any network call. The connected image and
+ * video workflows go through the Higgsfield REST adapter instead.
  */
-export async function requestHiggsfieldGeneration(
-  input: ProviderGenerationInput,
-): Promise<ProviderGenerationResult> {
+export function localPreviewGeneration(input: ProviderGenerationInput): ProviderGenerationResult {
   assertAllowedOperation("generation.run_within_limits")
-  if (isLiveMode()) {
-    throw new StudioError(
-      "Higgsfield live calls are stubbed in this build. Keep STUDIO_OPERATOR_MODE=mock. No request was sent.",
-    )
-  }
-
   const providerRequestId = `mock_hf_${input.model.replace(/[^a-z0-9]+/gi, "_")}_${randomBytes(4).toString("hex")}`
   return {
     providerRequestId,
@@ -59,4 +51,15 @@ export async function requestHiggsfieldGeneration(
     actualCostCents: input.costEstimateCents,
     error: null,
   }
+}
+
+export async function requestHiggsfieldGeneration(
+  input: ProviderGenerationInput,
+): Promise<ProviderGenerationResult> {
+  if (isLiveMode()) {
+    throw new StudioError(
+      "This entry point does not call Higgsfield. Keep STUDIO_OPERATOR_MODE=mock, or run generation from the desk. No request was sent.",
+    )
+  }
+  return localPreviewGeneration(input)
 }

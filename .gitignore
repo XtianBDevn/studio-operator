@@ -39,6 +39,9 @@ yarn-error.log*
 /prisma/*.db
 /prisma/*.db-journal
 
+# provider assets copied into app storage (URLs from Higgsfield expire)
+/storage
+
 # vercel
 .vercel
 

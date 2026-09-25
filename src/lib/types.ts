@@ -53,14 +53,39 @@ export type WorkflowStepRecord = {
   status: "planned" | "ready" | "running" | "complete" | "failed" | "blocked"
 }
 
+export const GENERATION_STATUSES = [
+  "queued",
+  "running",
+  "in_progress",
+  "succeeded",
+  "failed",
+  "nsfw",
+  "canceled",
+  "timed_out",
+] as const
+export type GenerationDeskStatus = (typeof GENERATION_STATUSES)[number]
+
 export type GenerationRecord = {
   id: string
   stepId: string | null
   providerRequestId: string
   model: string
-  status: "queued" | "running" | "succeeded" | "failed"
+  status: GenerationDeskStatus
+  providerStatus: string | null
+  statusUrl: string | null
+  cancelUrl: string | null
+  correlationId: string | null
+  settingsJson: string | null
+  assetKind: string | null
+  providerOutputUrl: string | null
   costEstimateCents: number
   actualCostCents: number | null
+  estimatedCredits: string | null
+  estimatedUsd: string | null
+  actualCredits: string | null
+  actualUsd: string | null
+  costSource: string | null
+  retryOfId: string | null
   outputUrl: string | null
   error: string | null
   createdAt: string
@@ -140,7 +165,14 @@ export function spentGenerationCents(
   }>,
 ): number {
   return generations.reduce((sum, generation) => {
-    if (generation.status === "failed") return sum
+    if (
+      generation.status === "failed" ||
+      generation.status === "nsfw" ||
+      generation.status === "canceled" ||
+      generation.status === "timed_out"
+    ) {
+      return sum
+    }
     return sum + (generation.actualCostCents ?? generation.costEstimateCents)
   }, 0)
 }

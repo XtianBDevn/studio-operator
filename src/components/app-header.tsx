@@ -24,10 +24,13 @@ export function AppHeader({
           <p className="truncate text-sm">Production desk</p>
         </Link>
         <div className="flex items-center gap-2">
-          <p className="hidden text-xs text-muted-foreground sm:block">
+          <p className="hidden text-xs text-muted-foreground md:block">
             {analysisProvider === "openai" ? "Astra live" : "Astra mock"} · {model}
-            {mode === "live" ? " · generation live stub" : ""}
+            {mode === "live" ? " · Higgsfield live" : " · Higgsfield mock"}
           </p>
+          <Link href="/connection" className={cn(buttonVariants({ size: "sm", variant: "outline" }))}>
+            Connection
+          </Link>
           <Link href="/jobs/new" className={cn(buttonVariants({ size: "sm" }))}>
             <Plus />
             New Job

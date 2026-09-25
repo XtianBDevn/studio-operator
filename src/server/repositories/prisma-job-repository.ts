@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@prisma/client"
+import type { Prisma, PrismaClient } from "@prisma/client"
 
 import { validateStoredAnalysis, type StoredAnalysis } from "@/lib/analysis"
 import { StudioError } from "@/lib/errors"
@@ -21,6 +21,7 @@ import { estimatedGenerationCents } from "@/lib/types"
 import type {
   CreateJobInput,
   GenerationComplete,
+  GenerationPatch,
   GenerationWrite,
   JobPatch,
   JobRepository,
@@ -230,20 +231,30 @@ export class PrismaJobRepository implements JobRepository {
     await this.db.workflowStep.update({ where: { id }, data: patch })
   }
 
-  async createGeneration(input: GenerationWrite): Promise<void> {
-    await this.db.generation.create({
+  async generationAssetPath(id: string): Promise<string | null> {
+    const row = await this.db.generation.findUnique({ where: { id }, select: { localPath: true } })
+    return row?.localPath ?? null
+  }
+
+  async createGeneration(input: GenerationWrite): Promise<string> {
+    const row = await this.db.generation.create({
       data: {
+        ...optionalGenerationFields(input),
         jobId: input.jobId,
         stepId: input.stepId,
         providerRequestId: input.providerRequestId,
         model: input.model,
         status: input.status,
         costEstimateCents: input.costEstimateCents,
-        actualCostCents: input.actualCostCents ?? null,
-        outputUrl: input.outputUrl ?? null,
-        error: input.error ?? null,
-        completedAt: input.completedAt ?? null,
-      },
+      } as Prisma.GenerationUncheckedCreateInput,
+    })
+    return row.id
+  }
+
+  async updateGeneration(id: string, patch: GenerationPatch): Promise<void> {
+    await this.db.generation.update({
+      where: { id },
+      data: optionalGenerationFields(patch),
     })
   }
 
@@ -378,8 +389,21 @@ export class PrismaJobRepository implements JobRepository {
           providerRequestId: generation.providerRequestId,
           model: generation.model,
           status: generation.status as GenerationRecord["status"],
+          providerStatus: generation.providerStatus,
+          statusUrl: generation.statusUrl,
+          cancelUrl: generation.cancelUrl,
+          correlationId: generation.correlationId,
+          settingsJson: generation.settingsJson,
+          assetKind: generation.assetKind,
+          providerOutputUrl: generation.providerOutputUrl,
           costEstimateCents: generation.costEstimateCents,
           actualCostCents: generation.actualCostCents,
+          estimatedCredits: generation.estimatedCredits,
+          estimatedUsd: generation.estimatedUsd,
+          actualCredits: generation.actualCredits,
+          actualUsd: generation.actualUsd,
+          costSource: generation.costSource,
+          retryOfId: generation.retryOfId,
           outputUrl: generation.outputUrl,
           error: generation.error,
           createdAt: generation.createdAt.toISOString(),
@@ -411,6 +435,33 @@ export class PrismaJobRepository implements JobRepository {
       ),
     }
   }
+}
+
+function optionalGenerationFields(input: GenerationPatch): Prisma.GenerationUncheckedUpdateInput {
+  const data: Prisma.GenerationUncheckedUpdateInput = {}
+  if (input.providerRequestId !== undefined) data.providerRequestId = input.providerRequestId
+  if (input.model !== undefined) data.model = input.model
+  if (input.status !== undefined) data.status = input.status
+  if (input.providerStatus !== undefined) data.providerStatus = input.providerStatus
+  if (input.statusUrl !== undefined) data.statusUrl = input.statusUrl
+  if (input.cancelUrl !== undefined) data.cancelUrl = input.cancelUrl
+  if (input.correlationId !== undefined) data.correlationId = input.correlationId
+  if (input.settingsJson !== undefined) data.settingsJson = input.settingsJson
+  if (input.assetKind !== undefined) data.assetKind = input.assetKind
+  if (input.localPath !== undefined) data.localPath = input.localPath
+  if (input.providerOutputUrl !== undefined) data.providerOutputUrl = input.providerOutputUrl
+  if (input.costEstimateCents !== undefined) data.costEstimateCents = input.costEstimateCents
+  if (input.actualCostCents !== undefined) data.actualCostCents = input.actualCostCents
+  if (input.estimatedCredits !== undefined) data.estimatedCredits = input.estimatedCredits
+  if (input.estimatedUsd !== undefined) data.estimatedUsd = input.estimatedUsd
+  if (input.actualCredits !== undefined) data.actualCredits = input.actualCredits
+  if (input.actualUsd !== undefined) data.actualUsd = input.actualUsd
+  if (input.costSource !== undefined) data.costSource = input.costSource
+  if (input.retryOfId !== undefined) data.retryOfId = input.retryOfId
+  if (input.outputUrl !== undefined) data.outputUrl = input.outputUrl
+  if (input.error !== undefined) data.error = input.error
+  if (input.completedAt !== undefined) data.completedAt = input.completedAt
+  return data
 }
 
 function mapAnalysis(analysis: {

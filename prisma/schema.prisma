@@ -103,8 +103,22 @@ model Generation {
   providerRequestId String
   model             String
   status            String
+  providerStatus    String?
+  statusUrl         String?
+  cancelUrl         String?
+  correlationId     String?
+  settingsJson      String?
+  assetKind         String?
+  localPath         String?
+  providerOutputUrl String?
   costEstimateCents Int
   actualCostCents   Int?
+  estimatedCredits  String?
+  estimatedUsd      String?
+  actualCredits     String?
+  actualUsd         String?
+  costSource        String?
+  retryOfId         String?
   outputUrl         String?
   error             String?
   createdAt         DateTime  @default(now())
@@ -114,6 +128,37 @@ model Generation {
   @@index([jobId])
   @@index([stepId])
   @@index([status])
+  @@index([providerRequestId])
+  @@index([retryOfId])
+}
+
+// A confirmed server-side probe of the smallest documented image request.
+// Stores provider ids and redacted errors. Never stores credentials.
+model ConnectionTest {
+  id                String   @id @default(cuid())
+  endpointId        String
+  confirmed         Boolean
+  providerRequestId String?
+  statusUrl         String?
+  cancelUrl         String?
+  correlationId     String?
+  providerStatus    String?
+  appStatus         String
+  estimatedCredits  String?
+  estimatedUsd      String?
+  costEstimateCents Int?
+  actualCostCents   Int?
+  actualCredits     String?
+  actualUsd         String?
+  costSource        String?
+  outputUrl         String?
+  localPath         String?
+  settingsJson      String?
+  error             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([createdAt])
 }
 
 model Revision {

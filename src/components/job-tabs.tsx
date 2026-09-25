@@ -1,9 +1,11 @@
+import { GenerationTimeline } from "@/components/generation-timeline"
 import { decisionLabel } from "@/lib/analysis"
 import { formatDateTime, formatWhen } from "@/lib/format"
 import { formatMoney } from "@/lib/money"
 import { sourceLabel } from "@/lib/sources"
 import type { JobDetail } from "@/lib/types"
 import Link from "next/link"
+import { getRuntimeConfig } from "@/server/config"
 import { modelById } from "@/server/services/models"
 import {
   analyzeAction,
@@ -26,6 +28,7 @@ export function JobTabs({ job, initialTab }: { job: JobDetail; initialTab: strin
     ? initialTab
     : "brief"
   const deliverables = job.analysis?.effective.deliverables.map((item) => item.name) ?? []
+  const live = getRuntimeConfig().mode === "live"
 
   return (
     <Tabs key={tab} defaultValue={tab}>
@@ -205,47 +208,7 @@ export function JobTabs({ job, initialTab }: { job: JobDetail; initialTab: strin
       </TabsContent>
 
       <TabsContent value="outputs" className="mt-4">
-        {job.generations.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No generation requests yet.</p>
-        ) : (
-          <ul className="grid gap-3 sm:grid-cols-2">
-            {job.generations.map((generation) => {
-              const step = job.steps.find((item) => item.id === generation.stepId)
-              return (
-                <li key={generation.id} className="overflow-hidden rounded-lg ring-1 ring-foreground/10">
-                  {generation.outputUrl ? (
-                    // Mock frames are generated SVG responses, not static files.
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={generation.outputUrl}
-                      alt={`${step?.name ?? "Revision"} mock output`}
-                      className="aspect-video w-full bg-muted object-cover"
-                    />
-                  ) : (
-                    <div className="flex aspect-video items-center justify-center bg-muted text-xs text-muted-foreground">
-                      {generation.status}
-                    </div>
-                  )}
-                  <div className="space-y-1 p-3 text-xs">
-                    <p className="text-sm">{step?.name ?? "Revision pass"}</p>
-                    <p className="font-mono text-[11px] text-muted-foreground">{generation.providerRequestId}</p>
-                    <p>
-                      {generation.model} · {generation.status} · est {formatMoney(generation.costEstimateCents)}
-                      {generation.actualCostCents != null
-                        ? ` · actual ${formatMoney(generation.actualCostCents)}`
-                        : ""}
-                    </p>
-                    {generation.error ? <p className="text-rose-700">{generation.error}</p> : null}
-                    <p className="text-muted-foreground">
-                      Started {formatDateTime(generation.createdAt)}
-                      {generation.completedAt ? ` · finished ${formatDateTime(generation.completedAt)}` : ""}
-                    </p>
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
-        )}
+        <GenerationTimeline job={job} live={live} />
       </TabsContent>
 
       <TabsContent value="revisions" className="mt-4 space-y-4">

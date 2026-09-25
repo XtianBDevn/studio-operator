@@ -1,5 +1,5 @@
 import type { StoredAnalysis } from "@/lib/analysis"
-import type { GateKind, JobDetail, JobSummary } from "@/lib/types"
+import type { GateKind, GenerationDeskStatus, JobDetail, JobSummary } from "@/lib/types"
 import type { SourceId } from "@/lib/sources"
 import type { JobStatus } from "@/lib/statuses"
 import type { PlannedStep } from "@/server/services/plan-workflow"
@@ -33,13 +33,29 @@ export type GenerationWrite = {
   stepId: string | null
   providerRequestId: string
   model: string
-  status: "queued" | "running" | "succeeded" | "failed"
+  status: GenerationDeskStatus
+  providerStatus?: string | null
+  statusUrl?: string | null
+  cancelUrl?: string | null
+  correlationId?: string | null
+  settingsJson?: string | null
+  assetKind?: string | null
+  localPath?: string | null
+  providerOutputUrl?: string | null
   costEstimateCents: number
   actualCostCents?: number | null
+  estimatedCredits?: string | null
+  estimatedUsd?: string | null
+  actualCredits?: string | null
+  actualUsd?: string | null
+  costSource?: string | null
+  retryOfId?: string | null
   outputUrl?: string | null
   error?: string | null
   completedAt?: Date | null
 }
+
+export type GenerationPatch = Partial<Omit<GenerationWrite, "jobId" | "stepId">>
 
 export type GenerationComplete = {
   status: "succeeded" | "failed"
@@ -70,7 +86,9 @@ export interface JobRepository {
     patch: { approvalStatus?: string; status?: string },
   ): Promise<void>
   updateStep(id: string, patch: { approvalStatus?: string; status?: string }): Promise<void>
-  createGeneration(input: GenerationWrite): Promise<void>
+  generationAssetPath(id: string): Promise<string | null>
+  createGeneration(input: GenerationWrite): Promise<string>
+  updateGeneration(id: string, patch: GenerationPatch): Promise<void>
   completeGeneration(id: string, patch: GenerationComplete): Promise<void>
   createRevision(input: {
     jobId: string

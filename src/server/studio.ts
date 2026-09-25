@@ -10,7 +10,14 @@ import type { JobRepository } from "@/server/repositories/job-repository"
 import { catalogPrices, produceAnalysis, targetMarginBpsFromEnv } from "@/server/services/analyze-brief"
 import { MODEL_CATALOG } from "@/server/services/models"
 import { planFromAnalysis } from "@/server/services/plan-from-analysis"
-import { requestHiggsfieldGeneration } from "@/server/services/providers"
+import { requestHiggsfieldGeneration, localPreviewGeneration } from "@/server/services/providers"
+import {
+  cancelGeneration,
+  refreshGenerationStatus,
+  retryGeneration,
+  runLiveSteps,
+} from "@/server/services/live-generation"
+import { readHiggsfieldCredentials } from "@/server/services/higgsfield"
 import { recommendRevision } from "@/server/services/revisions"
 
 const DEFAULT_CONTINGENCY_BPS = 1500
@@ -296,6 +303,9 @@ export async function runGeneration(repo: JobRepository, jobId: string): Promise
   if (job.maxBudgetCents == null) {
     throw new StudioError("Set a maximum production budget before generating.")
   }
+  if (process.env.STUDIO_OPERATOR_MODE === "live" && !readHiggsfieldCredentials()) {
+    throw new StudioError("Higgsfield credentials are not configured on the server. No request was sent.")
+  }
 
   const pending = job.steps.filter((step) => {
     if (step.approvalStatus !== "approved") return false
@@ -328,6 +338,20 @@ export async function runGeneration(repo: JobRepository, jobId: string): Promise
 
   await repo.updateJob(jobId, { status: "generating" })
 
+  if (process.env.STUDIO_OPERATOR_MODE === "live") {
+    await runLiveSteps(repo, job)
+  } else {
+    await runMockSteps(repo, job, pending)
+  }
+
+  await finishIfReady(repo, jobId)
+}
+
+async function runMockSteps(
+  repo: JobRepository,
+  job: JobDetail,
+  pending: JobDetail["steps"],
+): Promise<void> {
   for (const step of pending) {
     const running = job.generations.find(
       (generation) =>
@@ -342,6 +366,12 @@ export async function runGeneration(repo: JobRepository, jobId: string): Promise
       kind: step.modelKind,
       costEstimateCents: running?.costEstimateCents ?? step.estimatedTotalCents,
     })
+    const settingsJson = JSON.stringify({
+      mode: "mock",
+      model: step.selectedModel,
+      kind: step.modelKind,
+      purpose: step.purpose,
+    })
     if (running) {
       await repo.completeGeneration(running.id, {
         status: "succeeded",
@@ -350,9 +380,10 @@ export async function runGeneration(repo: JobRepository, jobId: string): Promise
         error: null,
         completedAt: new Date(),
       })
+      await repo.updateGeneration(running.id, { settingsJson, costSource: "mock", providerStatus: null })
     } else {
       await repo.createGeneration({
-        jobId,
+        jobId: job.id,
         stepId: step.id,
         providerRequestId: result.providerRequestId,
         model: step.selectedModel,
@@ -361,12 +392,46 @@ export async function runGeneration(repo: JobRepository, jobId: string): Promise
         actualCostCents: result.actualCostCents,
         outputUrl: result.outputUrl,
         error: null,
+        settingsJson,
+        costSource: "mock",
         completedAt: new Date(),
       })
     }
     await repo.updateStep(step.id, { status: "complete" })
   }
+}
 
+export async function cancelJobGeneration(
+  repo: JobRepository,
+  jobId: string,
+  generationId: string,
+): Promise<void> {
+  assertAllowedOperation("generation.run_within_limits")
+  await cancelGeneration(repo, jobId, generationId)
+  await finishIfReady(repo, jobId)
+}
+
+export async function retryJobGeneration(
+  repo: JobRepository,
+  jobId: string,
+  generationId: string,
+): Promise<void> {
+  assertAllowedOperation("generation.run_within_limits")
+  await retryGeneration(repo, jobId, generationId)
+  await finishIfReady(repo, jobId)
+}
+
+export async function refreshJobGeneration(
+  repo: JobRepository,
+  jobId: string,
+  generationId: string,
+): Promise<void> {
+  assertAllowedOperation("generation.run_within_limits")
+  await refreshGenerationStatus(repo, jobId, generationId)
+  await finishIfReady(repo, jobId)
+}
+
+async function finishIfReady(repo: JobRepository, jobId: string): Promise<void> {
   const refreshed = await mustGet(repo, jobId)
   const finished = refreshed.steps
     .filter((step) => step.approvalStatus === "approved")
@@ -450,13 +515,22 @@ export async function decideRevision(
     )
   }
 
-  const result = await requestHiggsfieldGeneration({
-    model: MODEL_CATALOG.finishing.id,
-    title: job.title,
-    subtitle: revision.affectedDeliverable,
-    kind: "finishing",
-    costEstimateCents: revision.expectedIncrementalCents,
-  })
+  const live = process.env.STUDIO_OPERATOR_MODE === "live"
+  const result = live
+    ? localPreviewGeneration({
+        model: MODEL_CATALOG.finishing.id,
+        title: job.title,
+        subtitle: revision.affectedDeliverable,
+        kind: "finishing",
+        costEstimateCents: revision.expectedIncrementalCents,
+      })
+    : await requestHiggsfieldGeneration({
+        model: MODEL_CATALOG.finishing.id,
+        title: job.title,
+        subtitle: revision.affectedDeliverable,
+        kind: "finishing",
+        costEstimateCents: revision.expectedIncrementalCents,
+      })
   await repo.updateRevision(revisionId, "approved")
   await repo.createGeneration({
     jobId,
@@ -468,6 +542,13 @@ export async function decideRevision(
     actualCostCents: result.actualCostCents,
     outputUrl: result.outputUrl,
     error: null,
+    costSource: live ? "local_preview" : "mock",
+    settingsJson: JSON.stringify({
+      mode: live ? "local_preview" : "mock",
+      model: MODEL_CATALOG.finishing.id,
+      kind: "finishing",
+      note: "Finishing has no verified Higgsfield endpoint.",
+    }),
     completedAt: new Date(),
   })
 }

@@ -4,7 +4,9 @@ import { redirect } from "next/navigation"
 
 import { dollarsToCents } from "@/lib/money"
 import type { Decision } from "@/lib/types"
+import { runConnectionTest } from "@/server/connection-test"
 import { jobs } from "@/server/repositories"
+import { redactSecrets } from "@/server/services/higgsfield/redact"
 import {
   addRevision,
   analyzeJob,
@@ -13,12 +15,15 @@ import {
   approveDelivery,
   approveWorkflowAndBudget,
   approveWorkflowChange,
+  cancelJobGeneration,
   clearRights,
   decideRevision,
   intakeJob,
   planJob,
+  refreshJobGeneration,
   rejectJob,
   requestWorkflowChange,
+  retryJobGeneration,
   runGeneration,
   saveHumanAnalysis,
   setHumanDecision,
@@ -26,7 +31,8 @@ import {
 } from "@/server/studio"
 
 function messageFrom(error: unknown): string {
-  return error instanceof Error ? error.message : "Request failed"
+  const raw = error instanceof Error ? error.message : "Request failed"
+  return redactSecrets(raw).slice(0, 500)
 }
 
 function back(jobId: string, params: Record<string, string>): never {
@@ -129,9 +135,45 @@ export async function clearRightsAction(formData: FormData) {
 
 export async function generateAction(formData: FormData) {
   const jobId = readId(formData)
-  await perform(jobId, "outputs", "Approved steps generated in mock mode.", () =>
-    runGeneration(jobs, jobId),
+  const notice =
+    process.env.STUDIO_OPERATOR_MODE === "live"
+      ? "Generation updated. The timeline shows the provider status and recorded cost."
+      : "Approved steps generated in mock mode."
+  await perform(jobId, "outputs", notice, () => runGeneration(jobs, jobId))
+}
+
+export async function cancelGenerationAction(formData: FormData) {
+  const jobId = readId(formData)
+  const generationId = readId(formData, "generationId")
+  await perform(jobId, "outputs", "Queued request canceled.", () =>
+    cancelJobGeneration(jobs, jobId, generationId),
   )
+}
+
+export async function retryGenerationAction(formData: FormData) {
+  const jobId = readId(formData)
+  const generationId = readId(formData, "generationId")
+  await perform(jobId, "outputs", "Retry created a new generation. The earlier attempt was kept.", () =>
+    retryJobGeneration(jobs, jobId, generationId),
+  )
+}
+
+export async function refreshGenerationAction(formData: FormData) {
+  const jobId = readId(formData)
+  const generationId = readId(formData, "generationId")
+  await perform(jobId, "outputs", "Provider status refreshed.", () =>
+    refreshJobGeneration(jobs, jobId, generationId),
+  )
+}
+
+export async function connectionTestAction(formData: FormData) {
+  try {
+    await runConnectionTest(formData.get("confirm") === "yes")
+  } catch (error) {
+    if (error && typeof error === "object" && "digest" in error) throw error
+    redirect(`/connection?error=${encodeURIComponent(messageFrom(error))}`)
+  }
+  redirect("/connection?notice=" + encodeURIComponent("Connection test finished. Credentials were not shown."))
 }
 
 export async function commercialsAction(formData: FormData) {

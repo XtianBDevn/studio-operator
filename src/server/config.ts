@@ -8,10 +8,13 @@ export function resolveAnalysisProvider(): "mock" | "openai" {
 
 export function getRuntimeConfig() {
   const mode = process.env.STUDIO_OPERATOR_MODE === "live" ? "live" : "mock"
+  const keyId = process.env.HF_API_KEY_ID?.trim() ?? ""
+  const keySecret = process.env.HF_API_KEY_SECRET?.trim() ?? ""
   return {
     mode,
     analysisProvider: resolveAnalysisProvider(),
     analysisModel: process.env.OPENAI_MODEL?.trim() || process.env.OPENAI_COMPAT_MODEL?.trim() || "gpt-6-astra",
     analysisLabel: "GPT-6 Astra",
+    higgsfieldConfigured: Boolean(keyId && keySecret),
   } as const
 }
