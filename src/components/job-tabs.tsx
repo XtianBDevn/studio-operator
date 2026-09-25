@@ -150,7 +150,7 @@ export function JobTabs({ job, initialTab }: { job: JobDetail; initialTab: strin
           </ol>
         )}
         <p className="text-xs leading-5 text-muted-foreground">
-          Image, video, voice, editing, and finishing models are the mock Higgsfield catalog. Mock mode does not call the API.
+          Image is SOUL V2 and video is Kling 3.0 Standard. Voice, editing, and finishing are local planning steps. Mock mode does not call the API.
         </p>
       </TabsContent>
 
