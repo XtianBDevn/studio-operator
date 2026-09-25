@@ -806,7 +806,7 @@ export async function runQa(repo: JobRepository, jobId: string): Promise<void> {
     const spent = spentGenerationCents(refreshed.generations)
     await persistQa(repo, refreshed, {
       ...after,
-      reason: before.reason,
+      reason: `The motion check failed, so QA ran the priced continuity repair on ${before.repairModelLabel}. It stayed inside the approved per-repair and per-job limits. ${after.reason}`,
       repairModelId: before.repairModelId,
       repairModelLabel: before.repairModelLabel,
       incrementalCents: before.incrementalCents,
@@ -862,7 +862,7 @@ export async function approveQaRepair(
   const spent = spentGenerationCents(refreshed.generations)
   await persistQa(repo, refreshed, {
     ...after,
-    reason: before.reason,
+    reason: `A person approved the continuity repair on ${before.repairModelLabel} because it was outside the previous maximum. ${after.reason}`,
     repairModelId: before.repairModelId,
     repairModelLabel: before.repairModelLabel,
     incrementalCents: before.incrementalCents,

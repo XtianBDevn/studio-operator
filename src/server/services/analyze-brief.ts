@@ -318,7 +318,9 @@ export function mockAnalysisDraft(input: AnalysisInput): AnalysisDraft {
     brief
       .split("\n")
       .map((line) => line.trim().replace(/^[-*•]\s+/, ""))
-      .filter((line) => /palette|brand|#[0-9a-f]{3,8}|wordmark|tone|no [a-z]/i.test(line)),
+      .filter((line) =>
+        /palette|brand|#[0-9a-f]{3,8}|wordmark|tone|no [a-z]|consistent|preserve the world/i.test(line),
+      ),
   ).slice(0, 8)
 
   const rights: string[] = []
