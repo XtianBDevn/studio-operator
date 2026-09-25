@@ -11,6 +11,7 @@ export const GATE_KINDS = [
   "workflow_change",
   "rights",
   "final_delivery",
+  "qa_repair",
 ] as const
 export type GateKind = (typeof GATE_KINDS)[number]
 
@@ -110,6 +111,39 @@ export type RevisionRecord = {
   createdAt: string
 }
 
+export const QA_VERDICT_VALUES = ["concept", "controlled_edit", "regenerate", "ready"] as const
+export type QaVerdictValue = (typeof QA_VERDICT_VALUES)[number]
+
+export type QaCheckRecord = {
+  id: string
+  label: string
+  status: "pass" | "fail" | "na"
+  detail: string
+}
+
+export type QaReportRecord = {
+  id: string
+  checklist: QaCheckRecord[]
+  verdict: QaVerdictValue
+  reason: string
+  repairModelId: string | null
+  repairModelLabel: string | null
+  incrementalCents: number
+  newTotalCents: number
+  updatedMarginCents: number
+  withinLimits: boolean
+  autoRepaired: boolean
+  createdAt: string
+}
+
+export type DeliveryNoteRecord = {
+  id: string
+  body: string
+  provider: "mock" | "openai"
+  modelLabel: string
+  createdAt: string
+}
+
 export type ApprovalGateRecord = {
   id: string
   kind: GateKind
@@ -140,6 +174,8 @@ export type JobDetail = {
   generations: GenerationRecord[]
   revisions: RevisionRecord[]
   approvals: ApprovalGateRecord[]
+  qaReports: QaReportRecord[]
+  deliveryNote: DeliveryNoteRecord | null
 }
 
 export type JobSummary = {

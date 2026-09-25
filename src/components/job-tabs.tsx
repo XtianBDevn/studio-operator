@@ -1,4 +1,5 @@
 import { GenerationTimeline } from "@/components/generation-timeline"
+import { QaPanel } from "@/components/qa-panel"
 import { RouteBoard } from "@/components/route-board"
 import { decisionLabel } from "@/lib/analysis"
 import { formatDateTime, formatWhen } from "@/lib/format"
@@ -15,6 +16,7 @@ import {
   commercialsAction,
   decisionAction,
   noteAction,
+  qaAction,
   revisionAction,
   revisionDecisionAction,
 } from "@/server/actions"
@@ -27,7 +29,7 @@ const fieldClass =
   "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
 
 export function JobTabs({ job, initialTab }: { job: JobDetail; initialTab: string }) {
-  const tab = ["brief", "decision", "workflow", "costs", "outputs", "revisions"].includes(initialTab)
+  const tab = ["brief", "decision", "workflow", "costs", "outputs", "revisions", "qa"].includes(initialTab)
     ? initialTab
     : "brief"
   const deliverables = job.analysis?.effective.deliverables.map((item) => item.name) ?? []
@@ -52,6 +54,7 @@ export function JobTabs({ job, initialTab }: { job: JobDetail; initialTab: strin
         <TabsTrigger value="costs">Costs</TabsTrigger>
         <TabsTrigger value="outputs">Outputs</TabsTrigger>
         <TabsTrigger value="revisions">Revisions</TabsTrigger>
+        <TabsTrigger value="qa">QA</TabsTrigger>
       </TabsList>
 
       <TabsContent value="brief" className="mt-4 space-y-4">
@@ -277,6 +280,16 @@ export function JobTabs({ job, initialTab }: { job: JobDetail; initialTab: strin
         ) : (
           <p className="text-xs text-muted-foreground">Revision notes open once the job is in QA.</p>
         )}
+      </TabsContent>
+
+      <TabsContent value="qa" className="mt-4 space-y-4">
+        <QaPanel report={job.qaReports[0] ?? null} />
+        {actions.canRevise && !job.approvals.some((gate) => gate.kind === "qa_repair" && gate.status === "required") ? (
+          <form action={qaAction}>
+            <input type="hidden" name="jobId" value={job.id} />
+            <SubmitButton>Run QA</SubmitButton>
+          </form>
+        ) : null}
       </TabsContent>
     </Tabs>
   )

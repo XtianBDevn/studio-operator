@@ -24,8 +24,9 @@ Human approval is required for:
 - a material workflow change
 - a rights issue
 - final delivery
+- a QA repair that would exceed the approved per-repair or per-job limit
 
-After the workflow and budget are approved, generation can run only inside that maximum.
+After the workflow and budget are approved, generation can run only inside that maximum. A priced continuity repair can run from QA only inside those same limits.
 
 ## Run
 
@@ -34,7 +35,7 @@ npm i
 npm run dev
 ```
 
-Open http://localhost:3000.
+Open http://localhost:3000. The recording demos are at http://localhost:3000/record.
 
 `npm run dev` creates `.env` from `.env.example` when it is missing, applies the SQLite migration, and seeds the demo. No API keys are required. `STUDIO_OPERATOR_MODE=mock` is the default. The database file is `prisma/dev.db` (`DATABASE_URL=file:./dev.db`, resolved beside the Prisma schema).
 
@@ -43,6 +44,7 @@ Analysis uses GPT-6 Astra through the OpenAI Responses API when `OPENAI_API_KEY`
 ```bash
 npm run test:analysis
 npm run test:router
+npm run test:qa
 npm run test:higgsfield
 npm run smoke
 ```
@@ -88,7 +90,7 @@ Contingency is a percent of estimated generation. The channel fee is a percent o
 - `src/server/services/higgsfield/` — REST adapter for estimate, submit, poll, and queued cancel
 - `src/app/connection/page.tsx` — confirmed connection test
 - `src/lib/guardrails.ts` — forbidden marketplace operations
-- `prisma/schema.prisma` — Job, BriefAnalysis, WorkflowStep, Generation, Revision, ApprovalGate, ConnectionTest
+- `prisma/schema.prisma` — Job, BriefAnalysis, WorkflowStep, Generation, Revision, ApprovalGate, ConnectionTest, QaReport, DeliveryNote
 
 To move to Postgres later, keep the repository interface and replace `PrismaJobRepository`. Do not call Prisma from the UI.
 
@@ -123,6 +125,18 @@ The adapter follows the current REST docs, not the blocking TypeScript `subscrib
 
 Webhooks are documented, but this local app has no public HTTPS endpoint. Polling the returned status URL is the recovery path. Voice, editing, and finishing have no verified generation endpoint here, so those steps stay local previews even in live mode. Mock mode never calls the network.
 
+## QA and recording
+
+QA compares each succeeded output with the approved brief and stores a checklist: deliverable type, duration, aspect ratio, resolution, brand consistency, exact text, required scenes, prohibited elements, face and hands, motion, and audio or lip sync. The verdict is acceptable as a concept, needs a controlled edit, needs regeneration, or ready for human delivery review. Mock QA reads the brief and the generation records. It does not inspect pixels.
+
+A repair runs on its own only when the approved plan already priced that step, the incremental cost stays inside the step and the job maximum, and the attempt stays inside the approved limit. The desk shows the reason, the selected model, the incremental cost, the new total, and the updated margin. Anything outside those limits opens a human gate and does not generate.
+
+Two seeded briefs use that path. **After the Rain: Glass Monument** is a 72-hour Upwork-style package: a short film in 9:16 and 16:9 plus three keyframes. Its route is Z-Image Turbo for inexpensive concepts, Marketing Studio for controlled keyframes, Kling 3.0 Pro for premium motion, Seedance 2.5 video edit for one continuity repair, and a local finish. **Night Orchard: Slow Orbit** is a different problem: Grok Image 2.0 locks the hero still and Cinema Studio 4.0 carries the orbit. It does not add a concept batch or a repair. Planning rates are unchanged. Seedance and Cinema Studio are catalog choices; live submit is still only SOUL V2 and Kling 3.0 Standard. A QA repair of Seedance is a local preview and does not call Higgsfield.
+
+Recording mode (`/record`) is laid out for a desktop capture. It uses large status labels, a reset back to the seeded brief, and one continue button per stage: analysis, approval, generation, QA, and delivery. The page shows a generation ledger, client price beside the channel fee, API cost, contingency, and expected gross profit, then download links and a delivery note drafted by GPT-6 Astra. The note names deliverables only. Reset is limited to the two demo jobs and refreshes the deadline so analysis does not see a past date.
+
+`npm run test:qa` checks the checklist, the spend cap, the two routes, and the delivery note. `npm run test:router` still checks the earlier routing rules, including a rush deadline staying on Kling 3.0 Standard.
+
 ## Out of scope in this build
 
-Marketplace OAuth, proposal sending, and auth. QA demo recording and client-agent autonomy are later prompts. Analysis calls OpenAI only when `OPENAI_API_KEY` is set. Live Higgsfield submit is limited to the two wired workflows above.
+Marketplace OAuth, proposal sending, and auth. Client-agent autonomy settings are a later prompt. Analysis calls OpenAI only when `OPENAI_API_KEY` is set. Live Higgsfield submit is limited to the two wired workflows above.

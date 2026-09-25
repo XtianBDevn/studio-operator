@@ -16,6 +16,7 @@ import {
 } from "@/lib/analysis"
 import { StudioError } from "@/lib/errors"
 import { resolveAnalysisProvider } from "@/server/config"
+import { explicitDemoWorkflow } from "@/lib/demos"
 import { MODEL_CATALOG } from "@/server/services/models"
 
 export { resolveAnalysisProvider }
@@ -342,8 +343,13 @@ export function mockAnalysisDraft(input: AnalysisInput): AnalysisDraft {
     technicalRisks.push("Two aspect ratios need separate finishing, not a single crop assumed to be safe.")
   }
 
+  const explicit = explicitDemoWorkflow(brief)
   const steps: Array<{ step: WorkflowProposal; attempt: AttemptEstimate }> = []
-  if (stills) {
+  if (explicit) {
+    for (const item of explicit) {
+      steps.push(proposal(item.name, item.capability, item.purpose, item.attempts))
+    }
+  } else if (stills) {
     const stillCount = Number(brief.match(/\b(\d+)\s+(?:hero\s+)?stills?\b/i)?.[1] ?? (video ? 2 : 4))
     steps.push(
       proposal(
@@ -354,7 +360,7 @@ export function mockAnalysisDraft(input: AnalysisInput): AnalysisDraft {
       ),
     )
   }
-  if (video) {
+  if (!explicit && video) {
     const shots = seconds ? Math.max(1, Math.round(seconds / 5)) : 2
     steps.push(
       proposal(
@@ -365,7 +371,7 @@ export function mockAnalysisDraft(input: AnalysisInput): AnalysisDraft {
       ),
     )
   }
-  if (voice) {
+  if (!explicit && voice) {
     steps.push(
       proposal(
         "Voice line",
@@ -375,7 +381,7 @@ export function mockAnalysisDraft(input: AnalysisInput): AnalysisDraft {
       ),
     )
   }
-  if (steps.length >= 2 || /cutdown|edit|assembly|version/i.test(brief)) {
+  if (!explicit && (steps.length >= 2 || /cutdown|edit|assembly|version/i.test(brief))) {
     steps.push(
       proposal(
         "Assembly",
@@ -385,7 +391,7 @@ export function mockAnalysisDraft(input: AnalysisInput): AnalysisDraft {
       ),
     )
   }
-  if (steps.length > 0) {
+  if (!explicit && steps.length > 0) {
     steps.push(
       proposal(
         "Finish",

@@ -9,10 +9,14 @@ import type {
   ApprovalGateRecord,
   BriefAnalysisRecord,
   Decision,
+  DeliveryNoteRecord,
   GateKind,
   GenerationRecord,
   JobDetail,
   JobSummary,
+  QaCheckRecord,
+  QaReportRecord,
+  QaVerdictValue,
   ReferenceAssetRecord,
   RevisionRecord,
   WorkflowStepRecord,
@@ -22,9 +26,11 @@ import type {
   CreateJobInput,
   GenerationComplete,
   GenerationPatch,
+  DeliveryNoteWrite,
   GenerationWrite,
   JobPatch,
   JobRepository,
+  QaReportWrite,
 } from "@/server/repositories/job-repository"
 import type { PlannedStep } from "@/server/services/plan-workflow"
 
@@ -35,6 +41,8 @@ const detailInclude = {
   generations: { orderBy: { createdAt: "asc" as const } },
   revisions: { orderBy: { createdAt: "desc" as const } },
   approvals: { orderBy: { createdAt: "asc" as const } },
+  qaReports: { orderBy: { createdAt: "desc" as const } },
+  deliveryNote: true,
 }
 
 type JobWithDetail = Awaited<ReturnType<PrismaJobRepository["load"]>>
@@ -73,7 +81,8 @@ function asGateKind(value: string): GateKind {
     value !== "budget_increase" &&
     value !== "workflow_change" &&
     value !== "rights" &&
-    value !== "final_delivery"
+    value !== "final_delivery" &&
+    value !== "qa_repair"
   ) {
     throw new StudioError(`Unknown approval gate: ${value}`)
   }
@@ -147,6 +156,10 @@ export class PrismaJobRepository implements JobRepository {
       where: { id },
       data: {
         status: patch.status,
+        title: patch.title,
+        rawBrief: patch.rawBrief,
+        budgetCents: patch.budgetCents,
+        deadline: patch.deadline,
         clientNotes: patch.clientNotes,
         channelFeeBps: patch.channelFeeBps,
         contingencyBps: patch.contingencyBps,
@@ -321,6 +334,46 @@ export class PrismaJobRepository implements JobRepository {
     })
   }
 
+  async saveQaReport(input: QaReportWrite): Promise<void> {
+    await this.db.qaReport.create({ data: input })
+  }
+
+  async saveDeliveryNote(input: DeliveryNoteWrite): Promise<void> {
+    await this.db.deliveryNote.upsert({
+      where: { jobId: input.jobId },
+      create: input,
+      update: {
+        body: input.body,
+        provider: input.provider,
+        modelLabel: input.modelLabel,
+      },
+    })
+  }
+
+  async clearProduction(jobId: string): Promise<void> {
+    await this.db.$transaction([
+      this.db.qaReport.deleteMany({ where: { jobId } }),
+      this.db.deliveryNote.deleteMany({ where: { jobId } }),
+      this.db.revision.deleteMany({ where: { jobId } }),
+      this.db.generation.deleteMany({ where: { jobId } }),
+      this.db.workflowStep.deleteMany({ where: { jobId } }),
+      this.db.approvalGate.deleteMany({ where: { jobId } }),
+      this.db.briefAnalysis.deleteMany({ where: { jobId } }),
+    ])
+  }
+
+  async replaceAssets(
+    jobId: string,
+    assets: Array<{ label: string; url: string; kind: string }>,
+  ): Promise<void> {
+    await this.db.$transaction([
+      this.db.referenceAsset.deleteMany({ where: { jobId } }),
+      this.db.referenceAsset.createMany({
+        data: assets.map((asset) => ({ jobId, ...asset })),
+      }),
+    ])
+  }
+
   async resolveGate(
     jobId: string,
     kind: GateKind,
@@ -447,8 +500,81 @@ export class PrismaJobRepository implements JobRepository {
           resolvedAt: toIso(gate.resolvedAt),
         }),
       ),
+      qaReports: job.qaReports.map((report) => mapQaReport(report)),
+      deliveryNote: job.deliveryNote ? mapDeliveryNote(job.deliveryNote) : null,
     }
   }
+}
+
+function mapQaReport(report: {
+  id: string
+  checklistJson: string
+  verdict: string
+  reason: string
+  repairModelId: string | null
+  repairModelLabel: string | null
+  incrementalCents: number
+  newTotalCents: number
+  updatedMarginCents: number
+  withinLimits: boolean
+  autoRepaired: boolean
+  createdAt: Date
+}): QaReportRecord {
+  return {
+    id: report.id,
+    checklist: parseChecklist(report.checklistJson),
+    verdict: asVerdict(report.verdict),
+    reason: report.reason,
+    repairModelId: report.repairModelId,
+    repairModelLabel: report.repairModelLabel,
+    incrementalCents: report.incrementalCents,
+    newTotalCents: report.newTotalCents,
+    updatedMarginCents: report.updatedMarginCents,
+    withinLimits: report.withinLimits,
+    autoRepaired: report.autoRepaired,
+    createdAt: report.createdAt.toISOString(),
+  }
+}
+
+function mapDeliveryNote(note: {
+  id: string
+  body: string
+  provider: string
+  modelLabel: string
+  createdAt: Date
+}): DeliveryNoteRecord {
+  return {
+    id: note.id,
+    body: note.body,
+    provider: note.provider === "openai" ? "openai" : "mock",
+    modelLabel: note.modelLabel,
+    createdAt: note.createdAt.toISOString(),
+  }
+}
+
+function parseChecklist(raw: string): QaCheckRecord[] {
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed.flatMap((item) => {
+      if (!item || typeof item !== "object") return []
+      const record = item as Partial<QaCheckRecord>
+      if (typeof record.id !== "string" || typeof record.label !== "string" || typeof record.detail !== "string") {
+        return []
+      }
+      const status = record.status === "pass" || record.status === "fail" || record.status === "na" ? record.status : "na"
+      return [{ id: record.id, label: record.label, status, detail: record.detail }]
+    })
+  } catch {
+    return []
+  }
+}
+
+function asVerdict(value: string): QaVerdictValue {
+  if (value === "concept" || value === "controlled_edit" || value === "regenerate" || value === "ready") {
+    return value
+  }
+  return "regenerate"
 }
 
 function optionalGenerationFields(input: GenerationPatch): Prisma.GenerationUncheckedUpdateInput {

@@ -31,8 +31,10 @@ model Job {
   assets      ReferenceAsset[]
   steps       WorkflowStep[]
   generations Generation[]
-  revisions   Revision[]
-  approvals   ApprovalGate[]
+  revisions    Revision[]
+  approvals    ApprovalGate[]
+  qaReports    QaReport[]
+  deliveryNote DeliveryNote?
 
   @@index([status])
   @@index([source])
@@ -199,4 +201,36 @@ model ApprovalGate {
   @@index([jobId])
   @@index([kind])
   @@index([status])
+}
+
+model QaReport {
+  id                 String   @id @default(cuid())
+  jobId              String
+  job                Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  checklistJson      String
+  verdict            String
+  reason             String
+  repairModelId      String?
+  repairModelLabel   String?
+  incrementalCents   Int      @default(0)
+  newTotalCents      Int
+  updatedMarginCents Int
+  withinLimits       Boolean
+  autoRepaired       Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([jobId])
+  @@index([verdict])
+}
+
+model DeliveryNote {
+  id         String   @id @default(cuid())
+  jobId      String   @unique
+  job        Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  body       String
+  provider   String
+  modelLabel String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }

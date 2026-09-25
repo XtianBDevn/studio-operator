@@ -26,9 +26,14 @@ import {
   requestWorkflowChange,
   retryJobGeneration,
   runGeneration,
+  runQa,
   saveHumanAnalysis,
   setHumanDecision,
   updateCommercials,
+  updatePackagePrice,
+  approveQaRepair,
+  continueRecording,
+  resetDemoJob,
 } from "@/server/studio"
 
 function messageFrom(error: unknown): string {
@@ -291,6 +296,78 @@ export async function reviewAnalysisAction(formData: FormData) {
     redirect(`/jobs/${jobId}/review?error=${encodeURIComponent(messageFrom(error))}`)
   }
   redirect(`/jobs/${jobId}/review?notice=${encodeURIComponent(notice)}`)
+}
+
+function recordBack(jobId: string, params: Record<string, string>): never {
+  const search = new URLSearchParams(params)
+  redirect(`/record/${jobId}?${search.toString()}`)
+}
+
+export async function qaAction(formData: FormData) {
+  const jobId = readId(formData)
+  await perform(jobId, "qa", "QA checklist saved.", () => runQa(jobs, jobId))
+}
+
+export async function approveQaRepairAction(formData: FormData) {
+  const jobId = readId(formData)
+  const maxBudgetCents = dollarsToCents(String(formData.get("maxBudget") ?? ""))
+  await perform(jobId, "qa", "QA repair approved.", async () => {
+    if (maxBudgetCents == null) throw new Error("Enter a maximum that covers the repair.")
+    await approveQaRepair(jobs, jobId, maxBudgetCents)
+  })
+}
+
+export async function packagePriceAction(formData: FormData) {
+  const jobId = readId(formData)
+  const budgetCents = dollarsToCents(String(formData.get("budget") ?? ""))
+  await perform(jobId, "costs", "Package price updated.", async () => {
+    if (budgetCents == null || budgetCents < 1) throw new Error("Enter a package price above zero.")
+    await updatePackagePrice(jobs, jobId, budgetCents)
+  })
+}
+
+export async function recordContinueAction(formData: FormData) {
+  const jobId = readId(formData)
+  try {
+    await continueRecording(jobs, jobId)
+  } catch (error) {
+    if (error && typeof error === "object" && "digest" in error) throw error
+    recordBack(jobId, { error: messageFrom(error) })
+  }
+  recordBack(jobId, { notice: "Step complete." })
+}
+
+export async function recordResetAction(formData: FormData) {
+  const jobId = readId(formData)
+  try {
+    await resetDemoJob(jobs, jobId)
+  } catch (error) {
+    if (error && typeof error === "object" && "digest" in error) throw error
+    recordBack(jobId, { error: messageFrom(error) })
+  }
+  recordBack(jobId, { notice: "Demo reset to the seeded brief." })
+}
+
+export async function recordCommercialsAction(formData: FormData) {
+  const jobId = readId(formData)
+  const budgetCents = dollarsToCents(String(formData.get("budget") ?? ""))
+  const channelPercent = Number(formData.get("channelPercent"))
+  const contingencyPercent = Number(formData.get("contingencyPercent"))
+  try {
+    if (budgetCents == null || budgetCents < 1) throw new Error("Enter a package price above zero.")
+    if (!Number.isFinite(channelPercent) || !Number.isFinite(contingencyPercent)) {
+      throw new Error("Enter the channel fee and contingency as percents.")
+    }
+    await updatePackagePrice(jobs, jobId, budgetCents)
+    await updateCommercials(jobs, jobId, {
+      channelFeeBps: Math.round(channelPercent * 100),
+      contingencyBps: Math.round(contingencyPercent * 100),
+    })
+  } catch (error) {
+    if (error && typeof error === "object" && "digest" in error) throw error
+    recordBack(jobId, { error: messageFrom(error) })
+  }
+  recordBack(jobId, { notice: "Margin assumptions updated." })
 }
 
 export async function noteAction(formData: FormData) {

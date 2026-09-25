@@ -24,6 +24,10 @@ export const GATE_COPY: Record<
     label: "Final delivery",
     waiting: "Opens after generation is in QA. Approving it marks the job delivered inside Studio Operator. It does not upload files to a marketplace.",
   },
+  qa_repair: {
+    label: "QA repair outside the approved limit",
+    waiting: "Opens only when a targeted repair would exceed the approved per-repair or per-job spend. The repair does not run until a person approves it.",
+  },
 }
 
 export function latestGate(
@@ -93,7 +97,12 @@ export function deskActions(job: JobDetail): DeskActionState {
       job.analysis?.decision !== "reject",
     canRequestChange: ["approved", "generating", "qa"].includes(job.status),
     canApproveChange: changeBlocked,
-    canDeliver: job.status === "qa" && !pendingRevision && !rightsBlocked && !budgetBlocked,
+    canDeliver:
+      job.status === "qa" &&
+      !pendingRevision &&
+      !rightsBlocked &&
+      !budgetBlocked &&
+      !hasOpenGate(job.approvals, "qa_repair"),
     canReject: !["delivered", "rejected"].includes(job.status),
     canRevise: job.status === "qa",
     canEditCommercials: job.status !== "delivered",

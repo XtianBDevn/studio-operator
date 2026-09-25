@@ -34,9 +34,14 @@ export default async function HomePage() {
               : ""}
           </p>
         </div>
-        <Link href="/jobs/new" className="text-sm underline-offset-2 hover:underline">
-          Paste a brief
-        </Link>
+        <div className="flex gap-4">
+          <Link href="/record" className="text-sm underline-offset-2 hover:underline">
+            Recording
+          </Link>
+          <Link href="/jobs/new" className="text-sm underline-offset-2 hover:underline">
+            Paste a brief
+          </Link>
+        </div>
       </div>
       <PipelineBoard jobs={summaries} />
     </main>

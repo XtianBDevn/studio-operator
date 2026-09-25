@@ -5,6 +5,7 @@
 import { PrismaClient } from "@prisma/client"
 
 import { finalizeAnalysis, type AnalysisDraft, type StoredAnalysis } from "../src/lib/analysis"
+import { DEMO_SPECS, demoDeadline } from "../src/lib/demos"
 import { catalogPrices } from "../src/server/services/analyze-brief"
 import { mockOutputUrl } from "../src/server/services/providers"
 import { catalogById } from "../src/lib/router-catalog"
@@ -1048,7 +1049,25 @@ Budget $200. Tomorrow.`,
     },
   })
 
-  console.log("Seeded 7 jobs across the pipeline.")
+  for (const spec of DEMO_SPECS) {
+    await prisma.job.create({
+      data: {
+        id: spec.id,
+        title: spec.title,
+        source: spec.source,
+        rawBrief: spec.rawBrief,
+        budgetCents: spec.budgetCents,
+        deadline: demoDeadline(spec),
+        status: "new",
+        channelFeeBps: spec.channelFeeBps,
+        contingencyBps: spec.contingencyBps,
+        clientNotes: spec.clientNotes,
+        assets: { create: spec.assets },
+      },
+    })
+  }
+
+  console.log("Seeded 9 jobs across the pipeline.")
 }
 
 main()

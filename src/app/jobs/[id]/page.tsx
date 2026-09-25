@@ -8,6 +8,7 @@ import { JobActions } from "@/components/job-actions"
 import { JobTabs } from "@/components/job-tabs"
 import { ProfitabilityPanel } from "@/components/profitability-panel"
 import { Badge } from "@/components/ui/badge"
+import { isDemoJobId } from "@/lib/demos"
 import { formatWhen } from "@/lib/format"
 import { sourceLabel } from "@/lib/sources"
 import { statusLabel, statusTone } from "@/lib/statuses"
@@ -55,9 +56,16 @@ export default async function JobPage(props: {
             {sourceLabel(job.source)} · due {formatWhen(job.deadline)}
           </p>
         </div>
-        <Badge variant="outline" className={statusTone(job.status)}>
-          {statusLabel(job.status)}
-        </Badge>
+        <div className="flex items-center gap-3">
+          {isDemoJobId(job.id) ? (
+            <Link href={`/record/${job.id}`} className="text-sm underline-offset-2 hover:underline">
+              Recording
+            </Link>
+          ) : null}
+          <Badge variant="outline" className={statusTone(job.status)}>
+            {statusLabel(job.status)}
+          </Badge>
+        </div>
       </div>
       <div className="mt-4">
         <Flash error={search.error} notice={search.notice} />

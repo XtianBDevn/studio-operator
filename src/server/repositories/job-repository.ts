@@ -22,10 +22,35 @@ export type CreateJobInput = {
 
 export type JobPatch = {
   status?: JobStatus
+  title?: string
+  rawBrief?: string
+  budgetCents?: number
+  deadline?: Date | null
   clientNotes?: string
   channelFeeBps?: number
   contingencyBps?: number
   maxBudgetCents?: number | null
+}
+
+export type QaReportWrite = {
+  jobId: string
+  checklistJson: string
+  verdict: string
+  reason: string
+  repairModelId: string | null
+  repairModelLabel: string | null
+  incrementalCents: number
+  newTotalCents: number
+  updatedMarginCents: number
+  withinLimits: boolean
+  autoRepaired: boolean
+}
+
+export type DeliveryNoteWrite = {
+  jobId: string
+  body: string
+  provider: "mock" | "openai"
+  modelLabel: string
 }
 
 export type GenerationWrite = {
@@ -111,4 +136,8 @@ export interface JobRepository {
     status: "approved" | "rejected",
     detail?: string,
   ): Promise<void>
+  saveQaReport(input: QaReportWrite): Promise<void>
+  saveDeliveryNote(input: DeliveryNoteWrite): Promise<void>
+  clearProduction(jobId: string): Promise<void>
+  replaceAssets(jobId: string, assets: Array<{ label: string; url: string; kind: string }>): Promise<void>
 }

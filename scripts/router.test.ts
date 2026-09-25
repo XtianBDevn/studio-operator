@@ -1,5 +1,8 @@
 import assert from "node:assert/strict"
 
+import { mockAnalysisDraft } from "../src/server/services/analyze-brief"
+import { GLASS_MONUMENT, NIGHT_ORCHARD } from "../src/lib/demos"
+import { isConditionalRepair } from "../src/lib/qa"
 import { finalizeAnalysis, type AnalysisDraft, type CommercialContext } from "../src/lib/analysis"
 import { PLANNING_RATES } from "../src/lib/planning-rates"
 import { applyOverride, maxSpendCents, proposeRoute, type RouteLine } from "../src/lib/route"
@@ -340,6 +343,106 @@ function main() {
   assert.ok(attemptsOnly)
   assert.equal(attemptsOnly.lineCents, 2400)
   assert.equal(attemptsOnly.why, base.why)
+
+  const glassNow = new Date("2026-09-25T12:00:00.000Z")
+  const glassDeadline = new Date(glassNow.getTime() + 72 * 3_600_000).toISOString()
+  const glassDraft = mockAnalysisDraft({
+    rawBrief: GLASS_MONUMENT.rawBrief,
+    assetLabels: GLASS_MONUMENT.assets.map((asset) => asset.label),
+    budgetCents: GLASS_MONUMENT.budgetCents,
+    channelFeeBps: GLASS_MONUMENT.channelFeeBps,
+    contingencyBps: GLASS_MONUMENT.contingencyBps,
+    deadlineIso: glassDeadline,
+    now: glassNow,
+  })
+  const glass = finalizeAnalysis(glassDraft, {
+    clientPriceCents: GLASS_MONUMENT.budgetCents,
+    channelFeeBps: GLASS_MONUMENT.channelFeeBps,
+    contingencyBps: GLASS_MONUMENT.contingencyBps,
+    deadlineIso: glassDeadline,
+    now: glassNow,
+    targetMarginBps: 2500,
+    catalog: {
+      image: { unitCostCents: PLANNING_RATES.image.unitCostCents },
+      video: { unitCostCents: PLANNING_RATES.video.unitCostCents },
+      voice: { unitCostCents: PLANNING_RATES.voice.unitCostCents },
+      editing: { unitCostCents: PLANNING_RATES.editing.unitCostCents },
+      finishing: { unitCostCents: PLANNING_RATES.finishing.unitCostCents },
+    },
+  })
+  assert.equal(glass.decision, "accept")
+  const glassRoute = proposeRoute(glass, {
+    rawBrief: GLASS_MONUMENT.rawBrief,
+    deadlineIso: glassDeadline,
+    now: glassNow,
+    referenceCount: GLASS_MONUMENT.assets.length,
+  })
+  const glassModels = glassRoute.billed.map((item) => [item.name, item.modelId, item.role, item.stage])
+  assert.deepEqual(glassModels, [
+    ["Concept stills", "z-image/turbo", "SEARCH", "explore"],
+    ["Controlled keyframes", "marketing-studio/image", "CONTROL", "control"],
+    ["Final motion", "kling-video/v3.0/pro/text-to-video", "SHIP", "ship"],
+    ["Continuity repair", "bytedance/seedance-2.5/video-edit", "CONTROL", "repair"],
+    ["Finish", "local/finish", "FINISH", "finish"],
+  ])
+  const glassRepair = glassRoute.billed.find((item) => item.name === "Continuity repair")
+  assert.ok(glassRepair)
+  assert.equal(glassRepair.lineCents, 4500)
+  assert.match(glassRepair.why, /if needed/)
+  assert.match(glassRoute.billed.find((item) => item.name === "Final motion")?.why ?? "", /72 hours/)
+  assert.match(glassRoute.billed.find((item) => item.name === "Final motion")?.why ?? "", /Kling 3.0 Standard/)
+  const glassPlan = planFromAnalysis(glass, {
+    rawBrief: GLASS_MONUMENT.rawBrief,
+    deadlineIso: glassDeadline,
+    now: glassNow,
+    referenceCount: GLASS_MONUMENT.assets.length,
+  })
+  assert.equal(glassPlan.filter((step) => isConditionalRepair(step.purpose)).length, 1)
+  assert.equal(glassPlan.filter((step) => step.name === "Assembly").length, 0)
+
+  const orchardNow = glassNow
+  const orchardDeadline = new Date(orchardNow.getTime() + 96 * 3_600_000).toISOString()
+  const orchardDraft = mockAnalysisDraft({
+    rawBrief: NIGHT_ORCHARD.rawBrief,
+    assetLabels: NIGHT_ORCHARD.assets.map((asset) => asset.label),
+    budgetCents: NIGHT_ORCHARD.budgetCents,
+    channelFeeBps: NIGHT_ORCHARD.channelFeeBps,
+    contingencyBps: NIGHT_ORCHARD.contingencyBps,
+    deadlineIso: orchardDeadline,
+    now: orchardNow,
+  })
+  const orchard = finalizeAnalysis(orchardDraft, {
+    clientPriceCents: NIGHT_ORCHARD.budgetCents,
+    channelFeeBps: NIGHT_ORCHARD.channelFeeBps,
+    contingencyBps: NIGHT_ORCHARD.contingencyBps,
+    deadlineIso: orchardDeadline,
+    now: orchardNow,
+    targetMarginBps: 2500,
+    catalog: {
+      image: { unitCostCents: PLANNING_RATES.image.unitCostCents },
+      video: { unitCostCents: PLANNING_RATES.video.unitCostCents },
+      voice: { unitCostCents: PLANNING_RATES.voice.unitCostCents },
+      editing: { unitCostCents: PLANNING_RATES.editing.unitCostCents },
+      finishing: { unitCostCents: PLANNING_RATES.finishing.unitCostCents },
+    },
+  })
+  assert.equal(orchard.decision, "accept")
+  const orchardRoute = proposeRoute(orchard, {
+    rawBrief: NIGHT_ORCHARD.rawBrief,
+    deadlineIso: orchardDeadline,
+    now: orchardNow,
+    referenceCount: NIGHT_ORCHARD.assets.length,
+  })
+  assert.deepEqual(
+    orchardRoute.billed.map((item) => [item.name, item.modelId, item.role, item.stage]),
+    [
+      ["Hero still", "xai/grok-imagine-image-2.0", "CONTROL", "control"],
+      ["Orbit", "higgsfield/cinema-studio/4.0", "SHIP", "ship"],
+      ["Finish", "local/finish", "FINISH", "finish"],
+    ],
+  )
+  assert.equal(orchardRoute.billed.some((item) => item.stage === "explore" || item.stage === "repair"), false)
+  assert.notEqual(orchardRoute.billed.map((item) => item.modelId).join(), glassRoute.billed.map((item) => item.modelId).join())
 
   console.log("router tests passed")
 }

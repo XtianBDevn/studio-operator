@@ -404,6 +404,33 @@ function pickImage(
   signals: Signals,
 ): { entry: CatalogEntry; role: RouteRole; stage: RouteStage; why: string } {
   const explore = /explore|concept|rough|variant/i.test(purpose)
+  if (/explore inexpensive|inexpensive concept/i.test(purpose)) {
+    const entry = requireCatalog("z-image/turbo")
+    return {
+      entry,
+      role: "SEARCH",
+      stage: "explore",
+      why: `${entry.why} This step is inexpensive concept exploration. The image planning rate does not drop. ${fitBits(signals)}`,
+    }
+  }
+  if (/lock the monument|controlled keyframes/i.test(purpose)) {
+    const entry = requireCatalog("marketing-studio/image")
+    return {
+      entry,
+      role: "CONTROL",
+      stage: "control",
+      why: `${entry.why} Controlled keyframes have to hold monument architecture, glass, scale, and site. ${entry.substituteNote} ${fitBits(signals)}`,
+    }
+  }
+  if (/orchard keyframe|lock the hero still/i.test(purpose)) {
+    const entry = requireCatalog("xai/grok-imagine-image-2.0")
+    return {
+      entry,
+      role: "CONTROL",
+      stage: "control",
+      why: `${entry.why} The hero still has to stay locked to the approved orchard keyframe. ${fitBits(signals)}`,
+    }
+  }
   if (signals.references && (signals.exactText || signals.packaging)) {
     const entry = requireCatalog("alibaba/qwen-image-3/edit")
     return {
@@ -481,6 +508,33 @@ function pickVideo(
   signals: Signals,
 ): { entry: CatalogEntry; role: RouteRole; stage: RouteStage; why: string } {
   const explore = /explore|concept|rough|test|safety take/i.test(purpose) && /concept|rough|test/i.test(purpose)
+  if (/if needed|continuity failure/i.test(purpose)) {
+    const entry = requireCatalog("bytedance/seedance-2.5/video-edit")
+    return {
+      entry,
+      role: "CONTROL",
+      stage: "repair",
+      why: `${entry.why} Repair one continuity failure if needed. This is the single priced repair, billed at the video planning rate. ${fitBits(signals)}`,
+    }
+  }
+  if (/\borbit/i.test(purpose)) {
+    const entry = requireCatalog("higgsfield/cinema-studio/4.0")
+    return {
+      entry,
+      role: "SHIP",
+      stage: "ship",
+      why: `${entry.why} The move is a slow orbit that has to keep the world, depth, low-light detail, and spatial continuity. ${entry.substituteNote} ${fitBits(signals)}`,
+    }
+  }
+  if (/premium cinematic|cinematic film|final cinematic/i.test(purpose) && !/tomorrow|asap|\brush\b/i.test(signals.text)) {
+    const entry = requireCatalog("kling-video/v3.0/pro/text-to-video")
+    return {
+      entry,
+      role: "SHIP",
+      stage: "ship",
+      why: `${entry.why} Premium cinematic motion stays on Kling 3.0 Pro even when the deadline is inside 72 hours. Kling 3.0 Standard is the live-wired alternative when the brief is rushed. ${entry.substituteNote} ${fitBits(signals)}`,
+    }
+  }
   if (signals.talking && /\b(voiceover|voice-over|voice over|audio reference)\b/i.test(signals.text)) {
     const entry = requireCatalog("wan/v2.6/text-to-video")
     return {
