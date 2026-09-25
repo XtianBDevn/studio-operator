@@ -1,0 +1,368 @@
+import { formatDateTime, formatWhen } from "@/lib/format"
+import { formatMoney } from "@/lib/money"
+import { sourceLabel } from "@/lib/sources"
+import type { JobDetail } from "@/lib/types"
+import { modelById } from "@/server/services/models"
+import {
+  analyzeAction,
+  commercialsAction,
+  decisionAction,
+  noteAction,
+  revisionAction,
+  revisionDecisionAction,
+} from "@/server/actions"
+import { SubmitButton } from "@/components/submit-button"
+import { Badge } from "@/components/ui/badge"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Textarea } from "@/components/ui/textarea"
+
+const fieldClass =
+  "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+
+export function JobTabs({ job, initialTab }: { job: JobDetail; initialTab: string }) {
+  const tab = ["brief", "decision", "workflow", "costs", "outputs", "revisions"].includes(initialTab)
+    ? initialTab
+    : "brief"
+  const deliverables = job.analysis?.deliverables ?? []
+
+  return (
+    <Tabs key={tab} defaultValue={tab}>
+      <TabsList className="h-auto w-full flex-wrap justify-start">
+        <TabsTrigger value="brief">Brief</TabsTrigger>
+        <TabsTrigger value="decision">Decision</TabsTrigger>
+        <TabsTrigger value="workflow">Workflow</TabsTrigger>
+        <TabsTrigger value="costs">Costs</TabsTrigger>
+        <TabsTrigger value="outputs">Outputs</TabsTrigger>
+        <TabsTrigger value="revisions">Revisions</TabsTrigger>
+      </TabsList>
+
+      <TabsContent value="brief" className="mt-4 space-y-4">
+        <section className="space-y-2">
+          <h3 className="text-sm font-medium">Pasted brief</h3>
+          <p className="text-xs text-muted-foreground">
+            Source {sourceLabel(job.source)} · client price {formatMoney(job.budgetCents)} · due{" "}
+            {formatWhen(job.deadline)} · opened {formatDateTime(job.createdAt)}
+          </p>
+          <pre className="overflow-x-auto rounded-lg bg-muted/50 p-3 font-sans text-sm leading-6 whitespace-pre-wrap">
+            {job.rawBrief}
+          </pre>
+        </section>
+        <section>
+          <h3 className="text-sm font-medium">Reference assets</h3>
+          {job.assets.length === 0 ? (
+            <p className="mt-2 text-sm text-muted-foreground">No references pasted.</p>
+          ) : (
+            <ul className="mt-2 space-y-1 text-sm">
+              {job.assets.map((asset) => (
+                <li key={asset.id}>
+                  <a className="underline-offset-2 hover:underline" href={asset.url}>
+                    {asset.label}
+                  </a>
+                  <span className="text-muted-foreground"> · {asset.kind}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+        <section>
+          <h3 className="text-sm font-medium">Client notes</h3>
+          <p className="mt-2 text-sm whitespace-pre-wrap text-foreground/90">
+            {job.clientNotes || "No notes yet."}
+          </p>
+          <form action={noteAction} className="mt-3 flex flex-wrap items-end gap-2">
+            <input type="hidden" name="jobId" value={job.id} />
+            <label className="min-w-[240px] flex-1 text-xs text-muted-foreground">
+              Add a note
+              <input name="note" className={`${fieldClass} mt-1 bg-card`} />
+            </label>
+            <SubmitButton variant="outline">Save note</SubmitButton>
+          </form>
+        </section>
+      </TabsContent>
+
+      <TabsContent value="decision" className="mt-4 space-y-4">
+        {job.analysis ? (
+          <>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline" className="capitalize">
+                {job.analysis.decision}
+              </Badge>
+              <span className="text-xs text-muted-foreground">
+                Confidence {Math.round(job.analysis.confidence * 100)}% · {job.analysis.modelLabel}
+              </span>
+            </div>
+            <p className="text-sm leading-6">{job.analysis.rationale}</p>
+            <div className="grid gap-4 md:grid-cols-2">
+              <Fact title="Deliverables" items={job.analysis.deliverables} />
+              <Fact title="Dimensions" items={job.analysis.dimensions} />
+              <Fact title="Durations" items={job.analysis.durations} />
+              <Fact title="Exact text" items={job.analysis.exactText} />
+              <Fact title="Brand constraints" items={job.analysis.brandConstraints} />
+              <Fact title="References" items={job.analysis.referenceNotes} />
+              <Fact title="Rights concerns" items={job.analysis.rightsConcerns} />
+              <Fact title="Missing information" items={job.analysis.missingInformation} />
+            </div>
+            {["new", "needs_review", "rejected", "approved"].includes(job.status) ? (
+              <div className="flex flex-wrap gap-2">
+                <DecisionButton jobId={job.id} decision="accept" />
+                <DecisionButton jobId={job.id} decision="review" />
+                <DecisionButton jobId={job.id} decision="reject" />
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              This brief has not been analyzed. The step uses the configured model label and, in mock mode, structures the paste locally.
+            </p>
+            <form action={analyzeAction}>
+              <input type="hidden" name="jobId" value={job.id} />
+              <SubmitButton>Analyze brief</SubmitButton>
+            </form>
+          </div>
+        )}
+        {job.analysis && ["new", "needs_review", "rejected"].includes(job.status) ? (
+          <form action={analyzeAction}>
+            <input type="hidden" name="jobId" value={job.id} />
+            <SubmitButton variant="outline">Re-analyze brief</SubmitButton>
+          </form>
+        ) : null}
+      </TabsContent>
+
+      <TabsContent value="workflow" className="mt-4 space-y-3">
+        {job.steps.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No production plan yet.</p>
+        ) : (
+          <ol className="space-y-3">
+            {job.steps.map((step) => {
+              const model = modelById(step.selectedModel)
+              return (
+                <li key={step.id} className="rounded-lg bg-muted/40 p-3">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <h3 className="text-sm font-medium">
+                      {step.position}. {step.name}
+                    </h3>
+                    <p className="text-xs text-muted-foreground">
+                      {step.approvalStatus} · {step.status}
+                    </p>
+                  </div>
+                  <p className="mt-1 text-sm">{step.purpose}</p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {model?.label ?? step.selectedModel} · {step.modelKind} · {step.estimatedAttempts} ×{" "}
+                    {formatMoney(step.unitCostCents)} = {formatMoney(step.estimatedTotalCents)}
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                    Inputs: {step.inputs.join(" · ") || "—"}
+                  </p>
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    Expected outputs: {step.expectedOutputs.join(" · ") || "—"}
+                  </p>
+                </li>
+              )
+            })}
+          </ol>
+        )}
+        <p className="text-xs leading-5 text-muted-foreground">
+          Image, video, voice, editing, and finishing models are the mock Higgsfield catalog. Mock mode does not call the API.
+        </p>
+      </TabsContent>
+
+      <TabsContent value="costs" className="mt-4 space-y-4">
+        {job.steps.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Costs appear after a plan exists.</p>
+        ) : (
+          <table className="w-full text-left text-sm">
+            <thead className="text-xs text-muted-foreground">
+              <tr>
+                <th className="py-1 font-medium">Step</th>
+                <th className="py-1 font-medium">Attempts</th>
+                <th className="py-1 text-right font-medium">Estimate</th>
+              </tr>
+            </thead>
+            <tbody>
+              {job.steps.map((step) => (
+                <tr key={step.id} className="border-t">
+                  <td className="py-2">{step.name}</td>
+                  <td className="py-2 tabular-nums">{step.estimatedAttempts}</td>
+                  <td className="py-2 text-right tabular-nums">{formatMoney(step.estimatedTotalCents)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {job.status === "delivered" ? (
+          <p className="text-xs text-muted-foreground">Channel fee and contingency are locked after delivery.</p>
+        ) : (
+          <form action={commercialsAction} className="grid gap-3 rounded-lg bg-muted/40 p-3 sm:grid-cols-2">
+            <input type="hidden" name="jobId" value={job.id} />
+            <label className="text-xs text-muted-foreground">
+              Channel fee %
+              <input
+                name="channelPercent"
+                inputMode="decimal"
+                defaultValue={(job.channelFeeBps / 100).toFixed(1)}
+                className={`${fieldClass} mt-1 bg-card`}
+              />
+            </label>
+            <label className="text-xs text-muted-foreground">
+              Contingency %
+              <input
+                name="contingencyPercent"
+                inputMode="decimal"
+                defaultValue={(job.contingencyBps / 100).toFixed(1)}
+                className={`${fieldClass} mt-1 bg-card`}
+              />
+            </label>
+            <div className="sm:col-span-2">
+              <SubmitButton variant="outline">Update margin assumptions</SubmitButton>
+            </div>
+          </form>
+        )}
+      </TabsContent>
+
+      <TabsContent value="outputs" className="mt-4">
+        {job.generations.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No generation requests yet.</p>
+        ) : (
+          <ul className="grid gap-3 sm:grid-cols-2">
+            {job.generations.map((generation) => {
+              const step = job.steps.find((item) => item.id === generation.stepId)
+              return (
+                <li key={generation.id} className="overflow-hidden rounded-lg ring-1 ring-foreground/10">
+                  {generation.outputUrl ? (
+                    // Mock frames are generated SVG responses, not static files.
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={generation.outputUrl}
+                      alt={`${step?.name ?? "Revision"} mock output`}
+                      className="aspect-video w-full bg-muted object-cover"
+                    />
+                  ) : (
+                    <div className="flex aspect-video items-center justify-center bg-muted text-xs text-muted-foreground">
+                      {generation.status}
+                    </div>
+                  )}
+                  <div className="space-y-1 p-3 text-xs">
+                    <p className="text-sm">{step?.name ?? "Revision pass"}</p>
+                    <p className="font-mono text-[11px] text-muted-foreground">{generation.providerRequestId}</p>
+                    <p>
+                      {generation.model} · {generation.status} · est {formatMoney(generation.costEstimateCents)}
+                      {generation.actualCostCents != null
+                        ? ` · actual ${formatMoney(generation.actualCostCents)}`
+                        : ""}
+                    </p>
+                    {generation.error ? <p className="text-rose-700">{generation.error}</p> : null}
+                    <p className="text-muted-foreground">
+                      Started {formatDateTime(generation.createdAt)}
+                      {generation.completedAt ? ` · finished ${formatDateTime(generation.completedAt)}` : ""}
+                    </p>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </TabsContent>
+
+      <TabsContent value="revisions" className="mt-4 space-y-4">
+        {job.revisions.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No revision notes.</p>
+        ) : (
+          <ul className="space-y-3">
+            {job.revisions.map((revision) => (
+              <li key={revision.id} className="rounded-lg bg-muted/40 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-medium">{revision.affectedDeliverable}</p>
+                  <Badge variant="outline" className="capitalize">
+                    {revision.approvalStatus}
+                  </Badge>
+                </div>
+                <p className="mt-2 text-sm">{revision.clientNote}</p>
+                <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                  {revision.recommendedAction} · expected {formatMoney(revision.expectedIncrementalCents)} ·{" "}
+                  {formatDateTime(revision.createdAt)}
+                </p>
+                {revision.approvalStatus === "pending" && job.status === "qa" ? (
+                  <div className="mt-3 flex gap-2">
+                    <form action={revisionDecisionAction}>
+                      <input type="hidden" name="jobId" value={job.id} />
+                      <input type="hidden" name="revisionId" value={revision.id} />
+                      <input type="hidden" name="approval" value="approved" />
+                      <SubmitButton>Approve revision</SubmitButton>
+                    </form>
+                    <form action={revisionDecisionAction}>
+                      <input type="hidden" name="jobId" value={job.id} />
+                      <input type="hidden" name="revisionId" value={revision.id} />
+                      <input type="hidden" name="approval" value="rejected" />
+                      <SubmitButton variant="outline">Decline</SubmitButton>
+                    </form>
+                  </div>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+        {job.status === "qa" ? (
+          <form action={revisionAction} className="space-y-3 rounded-lg bg-muted/40 p-3">
+            <input type="hidden" name="jobId" value={job.id} />
+            <label className="block text-xs text-muted-foreground">
+              Affected deliverable
+              <select
+                name="affectedDeliverable"
+                className={`${fieldClass} mt-1 bg-card`}
+                defaultValue={deliverables[0] ?? "Whole job"}
+              >
+                {(deliverables.length ? deliverables : ["Whole job"]).map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-xs text-muted-foreground">
+              Client note
+              <Textarea name="clientNote" className="mt-1 bg-card" placeholder="What they asked to change" />
+            </label>
+            <SubmitButton variant="secondary">Record revision</SubmitButton>
+          </form>
+        ) : (
+          <p className="text-xs text-muted-foreground">Revision notes open once the job is in QA.</p>
+        )}
+      </TabsContent>
+    </Tabs>
+  )
+}
+
+function Fact({ title, items }: { title: string; items: string[] }) {
+  return (
+    <section>
+      <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{title}</h3>
+      {items.length === 0 ? (
+        <p className="mt-1 text-sm text-muted-foreground">None recorded.</p>
+      ) : (
+        <ul className="mt-1 list-disc space-y-1 pl-4 text-sm">
+          {items.map((item, index) => (
+            <li key={`${item}-${index}`}>{item}</li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+function DecisionButton({
+  jobId,
+  decision,
+}: {
+  jobId: string
+  decision: "accept" | "review" | "reject"
+}) {
+  const label = decision === "accept" ? "Accept" : decision === "review" ? "Needs review" : "Reject"
+  return (
+    <form action={decisionAction}>
+      <input type="hidden" name="jobId" value={jobId} />
+      <input type="hidden" name="decision" value={decision} />
+      <SubmitButton variant={decision === "reject" ? "destructive" : "outline"}>{label}</SubmitButton>
+    </form>
+  )
+}

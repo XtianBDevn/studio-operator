@@ -1,0 +1,153 @@
+// Studio Operator local persistence (SQLite).
+// Swap the repository implementation to move this model to Postgres.
+// Marketplace accounts, proposals, and deliveries are intentionally not stored:
+// a job's source is only a label for text the operator pasted in.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Job {
+  id              String    @id @default(cuid())
+  title           String
+  source          String
+  rawBrief        String
+  budgetCents     Int
+  deadline        DateTime?
+  status          String
+  clientNotes     String    @default("")
+  channelFeeBps   Int       @default(0)
+  contingencyBps  Int       @default(1500)
+  maxBudgetCents  Int?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  analysis    BriefAnalysis?
+  assets      ReferenceAsset[]
+  steps       WorkflowStep[]
+  generations Generation[]
+  revisions   Revision[]
+  approvals   ApprovalGate[]
+
+  @@index([status])
+  @@index([source])
+  @@index([createdAt])
+}
+
+model ReferenceAsset {
+  id        String   @id @default(cuid())
+  jobId     String
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  label     String
+  url       String
+  kind      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([jobId])
+}
+
+model BriefAnalysis {
+  id                 String   @id @default(cuid())
+  jobId              String   @unique
+  job                Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  deliverables       String
+  dimensions         String
+  durations          String
+  referenceNotes     String
+  exactText          String
+  brandConstraints   String
+  rightsConcerns     String
+  missingInformation String
+  confidence         Float
+  decision           String
+  rationale          String
+  modelLabel         String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model WorkflowStep {
+  id                  String   @id @default(cuid())
+  jobId               String
+  job                 Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  position            Int
+  name                String
+  selectedModel       String
+  modelKind           String
+  purpose             String
+  inputs              String
+  expectedOutputs     String
+  estimatedAttempts   Int
+  unitCostCents       Int
+  estimatedTotalCents Int
+  approvalStatus      String
+  status              String
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  generations         Generation[]
+
+  @@unique([jobId, position])
+  @@index([jobId])
+  @@index([approvalStatus])
+}
+
+model Generation {
+  id                String    @id @default(cuid())
+  jobId             String
+  job               Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  stepId            String?
+  step              WorkflowStep? @relation(fields: [stepId], references: [id], onDelete: SetNull)
+  providerRequestId String
+  model             String
+  status            String
+  costEstimateCents Int
+  actualCostCents   Int?
+  outputUrl         String?
+  error             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  completedAt       DateTime?
+
+  @@index([jobId])
+  @@index([stepId])
+  @@index([status])
+}
+
+model Revision {
+  id                       String   @id @default(cuid())
+  jobId                    String
+  job                      Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  clientNote               String
+  affectedDeliverable      String
+  recommendedAction        String
+  expectedIncrementalCents Int
+  approvalStatus           String
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  @@index([jobId])
+  @@index([approvalStatus])
+}
+
+model ApprovalGate {
+  id         String    @id @default(cuid())
+  jobId      String
+  job        Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  kind       String
+  status     String
+  summary    String
+  detail     String    @default("")
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  resolvedAt DateTime?
+
+  @@index([jobId])
+  @@index([kind])
+  @@index([status])
+}
