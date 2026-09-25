@@ -10,6 +10,7 @@ import type { JobRepository } from "@/server/repositories/job-repository"
 import { catalogPrices, produceAnalysis, targetMarginBpsFromEnv } from "@/server/services/analyze-brief"
 import { MODEL_CATALOG } from "@/server/services/models"
 import { planFromAnalysis } from "@/server/services/plan-from-analysis"
+import { applyOverride, linesFromStored, maxSpendCents, restage } from "@/lib/route"
 import { requestHiggsfieldGeneration, localPreviewGeneration } from "@/server/services/providers"
 import {
   cancelGeneration,
@@ -203,11 +204,77 @@ export async function planJob(repo: JobRepository, jobId: string): Promise<void>
     )
   }
 
-  const steps = planFromAnalysis(job.analysis.effective)
+  const steps = planFromAnalysis(job.analysis.effective, {
+    rawBrief: job.rawBrief,
+    deadlineIso: job.deadline,
+    referenceCount: job.assets.length,
+  })
   if (steps.length === 0) throw new StudioError("The brief did not produce any production steps.")
 
   await repo.replaceSteps(jobId, steps)
   const total = steps.reduce((sum, step) => sum + step.estimatedTotalCents, 0)
+  await repo.openGate({
+    jobId,
+    kind: "workflow_budget",
+    summary: "Approve the plan and a maximum production budget",
+    detail: `Estimated generation spend is ${(total / 100).toFixed(2)} USD before contingency. Generation cannot start until this gate is approved.`,
+  })
+  await repo.updateJob(jobId, { status: "needs_review", maxBudgetCents: null })
+}
+
+export async function saveRouteOverrides(
+  repo: JobRepository,
+  jobId: string,
+  patches: Array<{ position: number; modelId: string; attempts: number }>,
+): Promise<void> {
+  assertAllowedOperation("workflow.plan")
+  const job = await mustGet(repo, jobId)
+  if (!canRebuildPlan(job)) {
+    throw new StudioError("The approved route is locked. Approve a workflow change before changing models or spend.")
+  }
+  if (!hasOpenGate(job.approvals, "workflow_budget")) {
+    throw new StudioError("Build a plan before changing the route. Approval still has to cover the new maximum.")
+  }
+  if (job.steps.length === 0) throw new StudioError("Build a production plan first.")
+
+  const current = linesFromStored(job.steps)
+  const overridden = current.map((line) => {
+    const patch = patches.find((item) => item.position === line.position)
+    if (!patch) return line
+    const next = applyOverride(line, patch)
+    if (!next) throw new StudioError(`Model ${patch.modelId} is not in the capability catalog.`)
+    return next
+  })
+  const ordered = restage(overridden)
+  const outputs = job.analysis?.effective.deliverables.map((item) => item.name).slice(0, 4) ?? []
+  await repo.replaceSteps(
+    jobId,
+    ordered.map((line) => ({
+      position: line.position,
+      name: line.name,
+      selectedModel: line.modelId,
+      modelKind: line.capability,
+      purpose: line.why,
+      inputs: [
+        "Approved brief",
+        `Route ${line.stage}`,
+        `Role ${line.role}`,
+        `Alternative ${line.alternativeLabel}`,
+      ],
+      expectedOutputs: outputs.length > 0 ? outputs : [line.name],
+      estimatedAttempts: line.attempts,
+      unitCostCents: line.unitCostCents,
+      estimatedTotalCents: line.lineCents,
+      routeStage: line.stage,
+      routeRole: line.role,
+      whyFit: line.why,
+      failureMode: line.failureMode,
+      alternativeModel: line.alternativeModelId,
+      docsUrl: line.docsUrl,
+      substituteNote: line.substituteNote,
+    })),
+  )
+  const total = maxSpendCents(ordered)
   await repo.openGate({
     jobId,
     kind: "workflow_budget",

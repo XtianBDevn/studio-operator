@@ -83,6 +83,13 @@ model WorkflowStep {
   estimatedAttempts   Int
   unitCostCents       Int
   estimatedTotalCents Int
+  routeStage          String?
+  routeRole           String?
+  whyFit              String?
+  failureMode         String?
+  alternativeModel    String?
+  docsUrl             String?
+  substituteNote      String?
   approvalStatus      String
   status              String
   createdAt           DateTime @default(now())

@@ -11,6 +11,13 @@ export type PlannedStep = {
   estimatedAttempts: number
   unitCostCents: number
   estimatedTotalCents: number
+  routeStage?: string | null
+  routeRole?: string | null
+  whyFit?: string | null
+  failureMode?: string | null
+  alternativeModel?: string | null
+  docsUrl?: string | null
+  substituteNote?: string | null
 }
 
 function step(

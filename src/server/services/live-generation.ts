@@ -3,6 +3,7 @@ import type { GenerationDeskStatus, GenerationRecord, JobDetail, WorkflowStepRec
 import { spentGenerationCents } from "@/lib/types"
 import type { JobRepository } from "@/server/repositories/job-repository"
 import { localPreviewGeneration } from "@/server/services/providers"
+import { wiredLiveEndpoint } from "@/lib/router-catalog"
 import {
   HiggsfieldRequestError,
   buildKlingStandardInput,
@@ -94,16 +95,19 @@ async function progressStep(
     return updated?.generations.find((generation) => generation.id === latest.id)?.status ?? latest.status
   }
 
-  const workflow = connectedWorkflow(step.modelKind)
-  if (!workflow) return localStep(repo, job, step, null)
+  const wired = wiredLiveEndpoint(step.selectedModel)
+  if (!wired) {
+    if (step.modelKind === "image" || step.modelKind === "video") return unwiredStep(repo, job, step)
+    return localStep(repo, job, step, null)
+  }
 
-  const body = requestBody(job, step)
+  const body = wired === "soul" ? soulBody(job, step) : klingBody(job, step)
   let generationId = ""
   try {
     const result = await executeGeneration({
-      endpointId: workflow.endpointId,
+      endpointId: step.selectedModel,
       body,
-      expectedKind: workflow.kind,
+      expectedKind: wired === "soul" ? "image" : "video",
       client,
       timeoutMs: pollTimeoutMs(),
       onEstimated: async (estimate) => {
@@ -124,7 +128,7 @@ async function progressStep(
           jobId: job.id,
           stepId: step.id,
           providerRequestId: "pending",
-          model: workflow.endpointId,
+          model: step.selectedModel,
           status: "queued",
           costEstimateCents: estimate.cents,
           estimatedCredits: estimate.credits,
@@ -345,19 +349,23 @@ export async function retryGeneration(repo: JobRepository, jobId: string, genera
     await localStep(repo, job, step, previous.id)
     return
   }
-  const workflow = connectedWorkflow(step.modelKind)
-  if (!workflow) {
+  const wired = wiredLiveEndpoint(step.selectedModel)
+  if (!wired) {
+    if (step.modelKind === "image" || step.modelKind === "video") {
+      await unwiredStep(repo, job, step)
+      return
+    }
     await localStep(repo, job, step, previous.id)
     return
   }
   const client = clientOrThrow()
-  const body = requestBody(job, step)
+  const body = wired === "soul" ? soulBody(job, step) : klingBody(job, step)
   let generationIdNew = ""
   try {
     const result = await executeGeneration({
-      endpointId: workflow.endpointId,
+      endpointId: step.selectedModel,
       body,
-      expectedKind: workflow.kind,
+      expectedKind: wired === "soul" ? "image" : "video",
       client,
       timeoutMs: pollTimeoutMs(),
       onEstimated: async (estimate) => {
@@ -371,7 +379,7 @@ export async function retryGeneration(repo: JobRepository, jobId: string, genera
           stepId: step.id,
           retryOfId: previous.id,
           providerRequestId: "pending",
-          model: workflow.endpointId,
+          model: step.selectedModel,
           status: "queued",
           costEstimateCents: estimate.cents,
           estimatedCredits: estimate.credits,
@@ -453,21 +461,54 @@ async function applyResult(repo: JobRepository, jobId: string, generationId: str
   })
 }
 
-function requestBody(job: JobDetail, step: WorkflowStepRecord) {
-  const prompt = [job.title, step.purpose, step.expectedOutputs.join(". ")].filter(Boolean).join(". ")
+async function unwiredStep(
+  repo: JobRepository,
+  job: JobDetail,
+  step: WorkflowStepRecord,
+): Promise<string> {
+  await repo.createGeneration({
+    jobId: job.id,
+    stepId: step.id,
+    providerRequestId: `unwired_${crypto.randomUUID()}`,
+    model: step.selectedModel,
+    status: "failed",
+    costEstimateCents: step.estimatedTotalCents,
+    actualCostCents: null,
+    outputUrl: null,
+    error:
+      "No request was sent. This model is in the catalog, but live submit is implemented only for SOUL V2 and Kling 3.0 Standard text-to-video.",
+    costSource: null,
+    settingsJson: JSON.stringify({
+      mode: "unwired",
+      model: step.selectedModel,
+      kind: step.modelKind,
+    }),
+    completedAt: new Date(),
+  })
+  await repo.updateStep(step.id, { status: "failed" })
+  return "failed"
+}
+
+function promptFor(job: JobDetail, step: WorkflowStepRecord): string {
+  return [job.title, step.purpose, step.expectedOutputs.join(". ")].filter(Boolean).join(". ")
+}
+
+function soulBody(job: JobDetail, step: WorkflowStepRecord) {
   const aspect = job.analysis?.effective.deliverables.find((item) => item.aspectRatio)?.aspectRatio ?? null
-  if (step.modelKind === "video") {
-    const durationText = job.analysis?.effective.deliverables.find((item) => item.duration)?.duration ?? step.purpose
-    const silent = /silent|no voice|without sound|no audio/i.test(`${job.rawBrief}\n${step.purpose}`)
-    return buildKlingStandardInput({
-      prompt,
-      aspectRatio: aspect,
-      durationSeconds: secondsFrom(durationText),
-      sound: silent ? "off" : "on",
-    })
-  }
   const resolution = /1080/.test(`${job.rawBrief}\n${step.purpose}`) ? "1080p" : "720p"
-  return buildSoulV2Input({ prompt, aspectRatio: aspect, resolution })
+  return buildSoulV2Input({ prompt: promptFor(job, step), aspectRatio: aspect, resolution })
+}
+
+function klingBody(job: JobDetail, step: WorkflowStepRecord) {
+  const aspect = job.analysis?.effective.deliverables.find((item) => item.aspectRatio)?.aspectRatio ?? null
+  const durationText = job.analysis?.effective.deliverables.find((item) => item.duration)?.duration ?? step.purpose
+  const silent = /silent|no voice|without sound|no audio/i.test(`${job.rawBrief}\n${step.purpose}`)
+  return buildKlingStandardInput({
+    prompt: promptFor(job, step),
+    aspectRatio: aspect,
+    durationSeconds: secondsFrom(durationText),
+    sound: silent ? "off" : "on",
+  })
 }
 
 function secondsFrom(text: string): number | null {

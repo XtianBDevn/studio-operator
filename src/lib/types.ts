@@ -49,6 +49,13 @@ export type WorkflowStepRecord = {
   estimatedAttempts: number
   unitCostCents: number
   estimatedTotalCents: number
+  routeStage: string | null
+  routeRole: string | null
+  whyFit: string | null
+  failureMode: string | null
+  alternativeModel: string | null
+  docsUrl: string | null
+  substituteNote: string | null
   approvalStatus: "pending" | "approved" | "changes_requested"
   status: "planned" | "ready" | "running" | "complete" | "failed" | "blocked"
 }

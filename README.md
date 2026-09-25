@@ -42,6 +42,7 @@ Analysis uses GPT-6 Astra through the OpenAI Responses API when `OPENAI_API_KEY`
 
 ```bash
 npm run test:analysis
+npm run test:router
 npm run test:higgsfield
 npm run smoke
 ```
@@ -64,7 +65,7 @@ npm run smoke
 2. Open **Meridian — Northline concept film** for the full brief, decision, workflow, costs, outputs, and a pending revision.
 3. Open **Hearth & Rye — weekend loaf loop** for a shorter brief that is waiting on review.
 4. Use **New Job**, paste a brief, then Analyze. Open **Review analysis** to edit any extracted field, compare it with the original, and approve or reject the job.
-5. Build production plan, Approve workflow and budget, and Run approved generation. On the Costs tab, change the channel fee and contingency. The profitability panel recalculates expected gross margin.
+5. Build production plan, review the route, override a model or attempt count, and save. The maximum updates before you approve the workflow and budget. Run approved generation only inside that maximum. On the Costs tab, change the channel fee and contingency. The profitability panel recalculates expected gross margin.
 6. Open **Connection** to confirm a paid SOUL V2 still. Without `HF_API_KEY_ID` and `HF_API_KEY_SECRET` the screen refuses before any network call.
 
 The production budget is the client price minus the channel fee minus the target margin (`TARGET_MARGIN_BPS`, default 25%). Generation cost plus contingency has to fit inside that budget. Astra can estimate attempts. The desk makes the accept, human-review, or reject call from catalog prices, source fees, contingency, and the approved attempt limits.
@@ -91,6 +92,20 @@ Contingency is a percent of estimated generation. The channel fee is a percent o
 
 To move to Postgres later, keep the repository interface and replace `PrismaJobRepository`. Do not call Prisma from the UI.
 
+## Model router
+
+The workflow tab proposes a route before any paid call. It is a transparent plan, not a recommendation score.
+
+The pattern is Explore → Choose → Control → Ship → Repair → Finish → QA. Choose and QA are human gates with no model and no spend. A stage is skipped, with a reason, when the priced workflow does not need it.
+
+Every billed step shows the selected model, why it fits, the documented limit, an alternative, attempts, the desk planning rate, and the line total. The maximum authorized spend is the sum of those lines. Changing the model or the attempt count updates that maximum on the page immediately. Save the route, then approve the workflow and a maximum that covers it. Generation after approval stays inside that maximum.
+
+Planning rates stay at the capability prices already used by analysis: image $8, video $45, voice $15, editing $25, finishing $20. They are not Higgsfield list prices. A live call that this desk can submit still estimates credits and USD first.
+
+The catalog is grouped SEARCH, CONTROL, SHIP, and FINISH from the [image index](https://docs.higgsfield.ai/docs/models/image-generation.md) and [video index](https://docs.higgsfield.ai/docs/models/video-generation.md) checked on 2026-09-25. Seedream, Flux, Veo, Topaz, Speak, lip sync, and caption tools were not on those indexes. Substitutes are named on the step: Marketing Studio Image or Grok Image 2.0 for product references, Kling 3.0 Pro or Seedance 2.5 or Cinema Studio 4.0 for premium motion, PixVerse V6 or Wan 2.6 for talking scenes, and a desk finish pass where no upscaler was documented.
+
+Live submit is still only SOUL V2 and Kling 3.0 Standard text-to-video. Other catalog ids are planning choices. Mock mode previews them locally and does not call the network.
+
 ## Higgsfield
 
 The adapter follows the current REST docs, not the blocking TypeScript `subscribe()` helper:
@@ -110,4 +125,4 @@ Webhooks are documented, but this local app has no public HTTPS endpoint. Pollin
 
 ## Out of scope in this build
 
-Marketplace OAuth, proposal sending, and auth. A full model router, QA demo library, and client-agent autonomy are later prompts. Analysis calls OpenAI only when `OPENAI_API_KEY` is set.
+Marketplace OAuth, proposal sending, and auth. QA demo recording and client-agent autonomy are later prompts. Analysis calls OpenAI only when `OPENAI_API_KEY` is set. Live Higgsfield submit is limited to the two wired workflows above.

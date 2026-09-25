@@ -131,6 +131,13 @@ async function main() {
   for (const kind of ["image", "video", "voice", "editing", "finishing"]) {
     assert.ok(kinds.has(kind), `missing ${kind}`)
   }
+  assert.ok(detail.steps.some((step) => step.selectedModel === "alibaba/qwen-image-3/edit"))
+  assert.ok(detail.steps.some((step) => step.selectedModel === "kling-video/v3.0/pro/text-to-video"))
+  assert.ok(detail.steps.every((step) => step.whyFit && step.failureMode && step.alternativeModel && step.routeRole))
+  assert.equal(
+    estimatedGenerationCents(detail.steps),
+    detail.steps.reduce((sum, step) => sum + step.unitCostCents * step.estimatedAttempts, 0),
+  )
   const estimate = estimatedGenerationCents(detail.steps)
   const priced = computeProfitability({
     clientPriceCents: detail.budgetCents,

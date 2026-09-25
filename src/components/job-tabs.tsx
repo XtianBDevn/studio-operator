@@ -1,12 +1,15 @@
 import { GenerationTimeline } from "@/components/generation-timeline"
+import { RouteBoard } from "@/components/route-board"
 import { decisionLabel } from "@/lib/analysis"
 import { formatDateTime, formatWhen } from "@/lib/format"
 import { formatMoney } from "@/lib/money"
+import { linesFromStored, proposeRoute } from "@/lib/route"
+import { catalogByRole, ROUTE_ROLES } from "@/lib/router-catalog"
 import { sourceLabel } from "@/lib/sources"
 import type { JobDetail } from "@/lib/types"
+import { deskActions } from "@/lib/workflow-policy"
 import Link from "next/link"
 import { getRuntimeConfig } from "@/server/config"
-import { modelById } from "@/server/services/models"
 import {
   analyzeAction,
   commercialsAction,
@@ -29,6 +32,16 @@ export function JobTabs({ job, initialTab }: { job: JobDetail; initialTab: strin
     : "brief"
   const deliverables = job.analysis?.effective.deliverables.map((item) => item.name) ?? []
   const live = getRuntimeConfig().mode === "live"
+  const actions = deskActions(job)
+  const proposal =
+    job.analysis && job.steps.length === 0
+      ? proposeRoute(job.analysis.effective, {
+          rawBrief: job.rawBrief,
+          deadlineIso: job.deadline,
+          referenceCount: job.assets.length,
+        })
+      : null
+  const savedLines = linesFromStored(job.steps)
 
   return (
     <Tabs key={tab} defaultValue={tab}>
@@ -116,42 +129,31 @@ export function JobTabs({ job, initialTab }: { job: JobDetail; initialTab: strin
         ) : null}
       </TabsContent>
 
-      <TabsContent value="workflow" className="mt-4 space-y-3">
-        {job.steps.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No production plan yet.</p>
+      <TabsContent value="workflow" className="mt-4 space-y-4">
+        {proposal ? (
+          <>
+            <p className="text-sm text-muted-foreground">
+              This proposal is not billed until you build the plan and a person approves the workflow and a maximum spend.
+            </p>
+            <RouteBoard
+              jobId={job.id}
+              lines={proposal.billed}
+              notes={proposal.notes}
+              skipReasons={proposal.skipReasons}
+              mode="preview"
+            />
+          </>
+        ) : savedLines.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Analyze the brief before a route can be proposed.</p>
         ) : (
-          <ol className="space-y-3">
-            {job.steps.map((step) => {
-              const model = modelById(step.selectedModel)
-              return (
-                <li key={step.id} className="rounded-lg bg-muted/40 p-3">
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <h3 className="text-sm font-medium">
-                      {step.position}. {step.name}
-                    </h3>
-                    <p className="text-xs text-muted-foreground">
-                      {step.approvalStatus} · {step.status}
-                    </p>
-                  </div>
-                  <p className="mt-1 text-sm">{step.purpose}</p>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    {model?.label ?? step.selectedModel} · {step.modelKind} · {step.estimatedAttempts} ×{" "}
-                    {formatMoney(step.unitCostCents)} = {formatMoney(step.estimatedTotalCents)}
-                  </p>
-                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                    Inputs: {step.inputs.join(" · ") || "—"}
-                  </p>
-                  <p className="text-xs leading-5 text-muted-foreground">
-                    Expected outputs: {step.expectedOutputs.join(" · ") || "—"}
-                  </p>
-                </li>
-              )
-            })}
-          </ol>
+          <RouteBoard
+            jobId={job.id}
+            lines={savedLines}
+            notes={[]}
+            mode={actions.canApproveWorkflow ? "edit" : "locked"}
+          />
         )}
-        <p className="text-xs leading-5 text-muted-foreground">
-          Image is SOUL V2 and video is Kling 3.0 Standard. Voice, editing, and finishing are local planning steps. Mock mode does not call the API.
-        </p>
+        <CapabilityCatalog />
       </TabsContent>
 
       <TabsContent value="costs" className="mt-4 space-y-4">
@@ -355,6 +357,34 @@ function Fact({ title, items }: { title: string; items: string[] }) {
         </ul>
       )}
     </section>
+  )
+}
+
+function CapabilityCatalog() {
+  return (
+    <details className="rounded-lg bg-muted/40 p-3">
+      <summary className="cursor-pointer text-sm font-medium">Capability catalog</summary>
+      <p className="mt-2 text-xs leading-5 text-muted-foreground">
+        Grouped from the Higgsfield image and video indexes checked for this desk. Seedream, Flux, Veo, Topaz, Speak, lip sync, and caption tools were not on those indexes.
+      </p>
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        {ROUTE_ROLES.map((role) => (
+          <section key={role}>
+            <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{role}</h3>
+            <ul className="mt-1 space-y-1 text-sm">
+              {catalogByRole(role).map((model) => (
+                <li key={model.id}>
+                  <a className="underline-offset-2 hover:underline" href={model.docsUrl}>
+                    {model.label}
+                  </a>
+                  <span className="text-muted-foreground"> · {model.capability}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
+      </div>
+    </details>
   )
 }
 

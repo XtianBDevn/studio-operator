@@ -20,6 +20,7 @@ import {
   decideRevision,
   intakeJob,
   planJob,
+  saveRouteOverrides,
   refreshJobGeneration,
   rejectJob,
   requestWorkflowChange,
@@ -116,6 +117,25 @@ export async function planAction(formData: FormData) {
   const jobId = readId(formData)
   await perform(jobId, "workflow", "Production plan built. It still needs approval.", () =>
     planJob(jobs, jobId),
+  )
+}
+
+export async function routeOverrideAction(formData: FormData) {
+  const jobId = readId(formData)
+  const patches: Array<{ position: number; modelId: string; attempts: number }> = []
+  for (const [key, value] of formData.entries()) {
+    const match = /^model-(\d+)$/.exec(key)
+    if (!match?.[1]) continue
+    const position = Number(match[1])
+    const attempts = Number(formData.get(`attempts-${position}`))
+    patches.push({
+      position,
+      modelId: String(value),
+      attempts: Number.isInteger(attempts) ? attempts : 1,
+    })
+  }
+  await perform(jobId, "workflow", "Route updated. Approve the workflow and maximum spend before generation.", () =>
+    saveRouteOverrides(jobs, jobId, patches),
   )
 }
 

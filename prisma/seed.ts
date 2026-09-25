@@ -7,6 +7,7 @@ import { PrismaClient } from "@prisma/client"
 import { finalizeAnalysis, type AnalysisDraft, type StoredAnalysis } from "../src/lib/analysis"
 import { catalogPrices } from "../src/server/services/analyze-brief"
 import { mockOutputUrl } from "../src/server/services/providers"
+import { catalogById } from "../src/lib/router-catalog"
 import { MODEL_CATALOG } from "../src/server/services/models"
 
 const prisma = new PrismaClient()
@@ -29,6 +30,7 @@ function step(input: {
   position: number
   name: string
   model: typeof image
+  modelId?: string
   purpose: string
   inputs: string[]
   outputs: string[]
@@ -36,10 +38,12 @@ function step(input: {
   approvalStatus: string
   status: string
 }) {
+  const selectedModel = input.modelId ?? input.model.id
+  const entry = catalogById(selectedModel)
   return {
     position: input.position,
     name: input.name,
-    selectedModel: input.model.id,
+    selectedModel,
     modelKind: input.model.kind,
     purpose: input.purpose,
     inputs: json(input.inputs),
@@ -47,6 +51,13 @@ function step(input: {
     estimatedAttempts: input.attempts,
     unitCostCents: input.model.unitCostCents,
     estimatedTotalCents: input.model.unitCostCents * input.attempts,
+    routeStage: entry?.id === "local/edit" ? "repair" : entry?.role === "SEARCH" ? "explore" : entry?.role === "CONTROL" ? "control" : entry?.role === "SHIP" ? "ship" : "finish",
+    routeRole: entry?.id === "local/edit" ? "CONTROL" : entry?.role ?? null,
+    whyFit: entry ? `Saved plan. ${entry.why} Purpose: ${input.purpose}` : input.purpose,
+    failureMode: entry?.constraint ?? null,
+    alternativeModel: entry?.alternativeId ?? null,
+    docsUrl: entry?.docsUrl ?? null,
+    substituteNote: entry?.substituteNote ?? null,
     approvalStatus: input.approvalStatus,
     status: input.status,
   }
@@ -412,6 +423,7 @@ End card should have the bakery name. I'll send the logo later if I find it.`,
             position: 1,
             name: "Key stills",
             model: image,
+            modelId: "marketing-studio/image",
             purpose: "Oven light and loaf stills to lock the grade before motion.",
             inputs: ["Pasted brief"],
             outputs: ["Two stills"],
