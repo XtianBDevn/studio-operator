@@ -57,7 +57,9 @@ export function ApprovalTimeline({ job }: { job: JobDetail }) {
 }
 
 function placeholderState(job: JobDetail, kind: GateKind): string {
-  if (kind === "rights" && job.analysis && job.analysis.rightsConcerns.length === 0) return "clear"
+  if (kind === "rights" && job.analysis && job.analysis.effective.rightsAndConsentFlags.length === 0) {
+    return "clear"
+  }
   if (hasOpenGate(job.approvals, kind)) return "required"
   return "waiting"
 }

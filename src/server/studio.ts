@@ -1,3 +1,4 @@
+import { finalizeAnalysis, validateAnalysisDraft, type StoredAnalysis } from "@/lib/analysis"
 import { assertAllowedOperation } from "@/lib/guardrails"
 import { StudioError } from "@/lib/errors"
 import { computeProfitability } from "@/lib/profitability"
@@ -6,9 +7,9 @@ import type { Decision, JobDetail } from "@/lib/types"
 import { estimatedGenerationCents, spentGenerationCents } from "@/lib/types"
 import { canRebuildPlan, hasOpenGate } from "@/lib/workflow-policy"
 import type { JobRepository } from "@/server/repositories/job-repository"
-import { analyzeBrief } from "@/server/services/analyze-brief"
+import { catalogPrices, produceAnalysis, targetMarginBpsFromEnv } from "@/server/services/analyze-brief"
 import { MODEL_CATALOG } from "@/server/services/models"
-import { planWorkflow } from "@/server/services/plan-workflow"
+import { planFromAnalysis } from "@/server/services/plan-from-analysis"
 import { requestHiggsfieldGeneration } from "@/server/services/providers"
 import { recommendRevision } from "@/server/services/revisions"
 
@@ -18,6 +19,11 @@ async function mustGet(repo: JobRepository, id: string): Promise<JobDetail> {
   const job = await repo.getJob(id)
   if (!job) throw new StudioError("Job not found.")
   return job
+}
+
+function withHumanDecision(document: StoredAnalysis, decision: Decision, note: string): StoredAnalysis {
+  const decisionReasons = document.decisionReasons.filter((reason) => reason !== note)
+  return { ...document, decision, decisionReasons: [...decisionReasons, note] }
 }
 
 function assertBps(value: number, label: string) {
@@ -69,25 +75,27 @@ export async function analyzeJob(repo: JobRepository, jobId: string): Promise<vo
     throw new StudioError("Analysis is closed once production has been approved.")
   }
 
-  const analysis = analyzeBrief({
+  const analysis = await produceAnalysis({
     rawBrief: job.rawBrief,
     budgetCents: job.budgetCents,
     deadlineIso: job.deadline,
     assetLabels: job.assets.map((asset) => asset.label),
+    channelFeeBps: job.channelFeeBps,
+    contingencyBps: job.contingencyBps,
   })
   await repo.saveAnalysis(jobId, analysis)
 
-  if (analysis.rightsConcerns.length > 0) {
+  if (analysis.document.rightsAndConsentFlags.length > 0) {
     await repo.openGate({
       jobId,
       kind: "rights",
       summary: "Rights concern needs a person",
-      detail: analysis.rightsConcerns.join(" "),
+      detail: analysis.document.rightsAndConsentFlags.join(" "),
     })
   }
 
   await repo.updateJob(jobId, {
-    status: analysis.decision === "reject" ? "rejected" : "needs_review",
+    status: analysis.document.decision === "reject" ? "rejected" : "needs_review",
   })
 }
 
@@ -106,12 +114,72 @@ export async function setHumanDecision(
   const note =
     decision === "accept"
       ? "A person accepted the job for planning. Workflow and budget still need approval."
-      : decision === "review"
-        ? "A person sent the job back to review."
+      : decision === "human_review"
+        ? "A person sent the job back to human review."
         : "A person rejected the job. No proposal was sent."
-  await repo.updateDecision(jobId, decision, `${job.analysis.rationale} ${note}`)
+  await repo.saveEditedAnalysis(jobId, withHumanDecision(job.analysis.effective, decision, note))
   await repo.updateJob(jobId, {
     status: decision === "reject" ? "rejected" : "needs_review",
+  })
+}
+
+export async function saveHumanAnalysis(
+  repo: JobRepository,
+  jobId: string,
+  raw: unknown,
+  intent: "save" | "approve" | "reject",
+): Promise<void> {
+  assertAllowedOperation("decision.qualify")
+  const job = await mustGet(repo, jobId)
+  if (!job.analysis) throw new StudioError("Analyze the brief before editing it.")
+  if (["generating", "qa", "delivered"].includes(job.status)) {
+    throw new StudioError("The analysis is locked while work is in production or already delivered.")
+  }
+
+  let draft
+  try {
+    draft = validateAnalysisDraft(raw)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Invalid analysis."
+    throw new StudioError(`${message} Nothing was saved.`)
+  }
+  draft = {
+    ...draft,
+    decisionReasons: draft.decisionReasons.filter((reason) => !reason.startsWith("Desk:")),
+  }
+  let document = finalizeAnalysis(draft, {
+    clientPriceCents: job.budgetCents,
+    channelFeeBps: job.channelFeeBps,
+    contingencyBps: job.contingencyBps,
+    deadlineIso: job.deadline,
+    targetMarginBps: targetMarginBpsFromEnv(),
+    catalog: catalogPrices(),
+  })
+  if (intent === "approve") {
+    document = withHumanDecision(
+      document,
+      "accept",
+      "A person approved this analysis for planning. Workflow and budget still need approval.",
+    )
+  } else if (intent === "reject") {
+    document = withHumanDecision(
+      document,
+      "reject",
+      "A person rejected this analysis. No proposal was sent.",
+    )
+  }
+
+  await repo.saveEditedAnalysis(jobId, document)
+  if (document.rightsAndConsentFlags.length > 0 && !hasOpenGate(job.approvals, "rights")) {
+    await repo.openGate({
+      jobId,
+      kind: "rights",
+      summary: "Rights concern needs a person",
+      detail: document.rightsAndConsentFlags.join(" "),
+    })
+  }
+  await repo.updateJob(jobId, {
+    status: document.decision === "reject" ? "rejected" : "needs_review",
   })
 }
 
@@ -128,11 +196,7 @@ export async function planJob(repo: JobRepository, jobId: string): Promise<void>
     )
   }
 
-  const steps = planWorkflow({
-    title: job.title,
-    rawBrief: job.rawBrief,
-    deliverables: job.analysis.deliverables,
-  })
+  const steps = planFromAnalysis(job.analysis.effective)
   if (steps.length === 0) throw new StudioError("The brief did not produce any production steps.")
 
   await repo.replaceSteps(jobId, steps)
@@ -499,10 +563,13 @@ export async function rejectJob(repo: JobRepository, jobId: string): Promise<voi
   const job = await mustGet(repo, jobId)
   if (job.status === "delivered") throw new StudioError("Delivered jobs stay on the record.")
   if (job.analysis) {
-    await repo.updateDecision(
+    await repo.saveEditedAnalysis(
       jobId,
-      "reject",
-      `${job.analysis.rationale} A person rejected the job before delivery. No marketplace message was sent.`,
+      withHumanDecision(
+        job.analysis.effective,
+        "reject",
+        "A person rejected the job before delivery. No marketplace message was sent.",
+      ),
     )
   }
   await repo.updateJob(jobId, { status: "rejected" })

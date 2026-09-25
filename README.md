@@ -38,6 +38,13 @@ Open http://localhost:3000.
 
 `npm run dev` creates `.env` from `.env.example` when it is missing, applies the SQLite migration, and seeds the demo. No API keys are required. `STUDIO_OPERATOR_MODE=mock` is the default. The database file is `prisma/dev.db` (`DATABASE_URL=file:./dev.db`, resolved beside the Prisma schema).
 
+Analysis uses GPT-6 Astra through the OpenAI Responses API when `OPENAI_API_KEY` is set and `STUDIO_ANALYSIS_MODE` is not `mock`. The key stays on the server. Structured output is validated before anything is written. Without a key, the same schema is filled by a local mock. Generation prices always come from the model catalog and the deterministic cost calculator. If a price is missing, the job goes to human review.
+
+```bash
+npm run test:analysis
+npm run smoke
+```
+
 Reset the demo data:
 
 ```bash
@@ -55,8 +62,10 @@ npm run smoke
 1. Open the pipeline. Seeded jobs fill New, Needs Review, Approved, Generating, QA, Delivered, and Rejected.
 2. Open **Meridian — Northline concept film** for the full brief, decision, workflow, costs, outputs, and a pending revision.
 3. Open **Hearth & Rye — weekend loaf loop** for a shorter brief that is waiting on review.
-4. Use **New Job**, paste a brief, then Analyze, Build production plan, Approve workflow and budget, and Run approved generation.
-5. On the Costs tab, change the channel fee and contingency. The profitability panel recalculates expected gross margin.
+4. Use **New Job**, paste a brief, then Analyze. Open **Review analysis** to edit any extracted field, compare it with the original, and approve or reject the job.
+5. Build production plan, Approve workflow and budget, and Run approved generation. On the Costs tab, change the channel fee and contingency. The profitability panel recalculates expected gross margin.
+
+The production budget is the client price minus the channel fee minus the target margin (`TARGET_MARGIN_BPS`, default 25%). Generation cost plus contingency has to fit inside that budget. Astra can estimate attempts. The desk makes the accept, human-review, or reject call from catalog prices, source fees, contingency, and the approved attempt limits.
 
 Margin formula:
 
@@ -69,7 +78,9 @@ Contingency is a percent of estimated generation. The channel fee is a percent o
 - `src/server/repositories/job-repository.ts` — persistence interface
 - `src/server/repositories/prisma-job-repository.ts` — SQLite implementation
 - `src/server/studio.ts` — qualify, plan, approve, generate, revise, deliver
-- `src/server/services/analyze-brief.ts` — mock GPT-6 Astra analysis (`OPENAI_COMPAT_MODEL`)
+- `src/lib/analysis.ts` — analysis schema, validation, and deterministic accept / human-review / reject
+- `src/server/services/analyze-brief.ts` — GPT-6 Astra via the Responses API, or the local mock
+- `src/app/jobs/[id]/review/page.tsx` — human review of the original and edited analysis
 - `src/server/services/providers.ts` — mock Higgsfield stub (image, video, voice, editing, finishing)
 - `src/lib/guardrails.ts` — forbidden marketplace operations
 - `prisma/schema.prisma` — Job, BriefAnalysis, WorkflowStep, Generation, Revision, ApprovalGate
@@ -78,4 +89,4 @@ To move to Postgres later, keep the repository interface and replace `PrismaJobR
 
 ## Out of scope in this build
 
-Live model calls, live Higgsfield calls, marketplace OAuth, proposal sending, and auth. Setting `STUDIO_OPERATOR_MODE=live` returns an error and does not send a request.
+Live Higgsfield calls, marketplace OAuth, proposal sending, and auth. Setting `STUDIO_OPERATOR_MODE=live` refuses generation before a network call. Analysis calls OpenAI only when `OPENAI_API_KEY` is set.

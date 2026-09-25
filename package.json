@@ -11,6 +11,7 @@
     "start": "next start",
     "lint": "eslint",
     "smoke": "node scripts/ensure-env.mjs && prisma generate && rm -f prisma/smoke.db prisma/smoke.db-journal && DATABASE_URL=file:./smoke.db prisma migrate deploy && DATABASE_URL=file:./smoke.db tsx scripts/smoke.ts",
+    "test:analysis": "STUDIO_ANALYSIS_MODE=mock tsx scripts/analysis.test.ts",
     "db:reset": "rm -f prisma/dev.db prisma/dev.db-journal && prisma migrate deploy && tsx prisma/seed.ts"
   },
   "prisma": {

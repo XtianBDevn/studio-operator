@@ -53,23 +53,20 @@ model ReferenceAsset {
 }
 
 model BriefAnalysis {
-  id                 String   @id @default(cuid())
-  jobId              String   @unique
-  job                Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  deliverables       String
-  dimensions         String
-  durations          String
-  referenceNotes     String
-  exactText          String
-  brandConstraints   String
-  rightsConcerns     String
-  missingInformation String
-  confidence         Float
-  decision           String
-  rationale          String
-  modelLabel         String
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id           String   @id @default(cuid())
+  jobId        String   @unique
+  job          Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  originalJson String
+  editedJson   String?
+  decision     String
+  confidence   Int
+  modelLabel   String
+  provider     String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([decision])
+  @@index([provider])
 }
 
 model WorkflowStep {

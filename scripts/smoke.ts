@@ -45,6 +45,9 @@ Budget $200. Tomorrow.`
 
 async function main() {
   process.env.STUDIO_OPERATOR_MODE = "mock"
+  process.env.STUDIO_ANALYSIS_MODE = "mock"
+  delete process.env.OPENAI_API_KEY
+  delete process.env.OPENAI_COMPAT_API_KEY
   const repo = new PrismaJobRepository(prisma)
 
   const northline = computeProfitability({
@@ -74,33 +77,38 @@ async function main() {
     assert.doesNotThrow(() => assertAllowedOperation(operation))
   }
 
-  const clean = analyzeBrief({
+  const clean = await analyzeBrief({
     rawBrief: CLEAN_BRIEF,
     budgetCents: 180_000,
     deadlineIso: "2026-10-20T12:00:00.000Z",
     assetLabels: ["Shop counter sketch"],
+    channelFeeBps: 0,
   })
-  assert.equal(clean.decision, "accept", clean.rationale)
-  assert.ok(clean.deliverables.length >= 2)
-  assert.ok(clean.exactText.includes("Northwind"))
+  assert.equal(clean.document.decision, "accept", clean.document.decisionReasons.join(" "))
+  assert.ok(clean.document.deliverables.length >= 2)
+  assert.ok(clean.document.deliverables.some((item) => item.exactText.includes("Northwind")))
   assert.match(clean.modelLabel, /GPT-6 Astra/)
+  assert.equal(clean.provider, "mock")
+  assert.equal(clean.document.costing.pricesComplete, true)
 
-  const hearth = analyzeBrief({
+  const hearth = await analyzeBrief({
     rawBrief: HEARTH_BRIEF,
     budgetCents: 35_000,
     deadlineIso: "2026-09-28T12:00:00.000Z",
     assetLabels: [],
+    channelFeeBps: 2000,
   })
-  assert.equal(hearth.decision, "review", hearth.rationale)
+  assert.equal(hearth.document.decision, "human_review", hearth.document.decisionReasons.join(" "))
 
-  const soda = analyzeBrief({
+  const soda = await analyzeBrief({
     rawBrief: SODA_BRIEF,
     budgetCents: 20_000,
     deadlineIso: "2026-09-26T12:00:00.000Z",
     assetLabels: [],
+    channelFeeBps: 2000,
   })
-  assert.equal(soda.decision, "reject", soda.rationale)
-  assert.ok(soda.rightsConcerns.length >= 2)
+  assert.equal(soda.document.decision, "reject", soda.document.decisionReasons.join(" "))
+  assert.ok(soda.document.rightsAndConsentFlags.length >= 2)
 
   const job = await intakeJob(repo, {
     title: "Northwind brand film",
@@ -141,7 +149,7 @@ async function main() {
   assert.ok(detail.approvals.some((gate) => gate.kind === "final_delivery" && gate.status === "required"))
   await addRevision(repo, job.id, {
     clientNote: "Cool the grade a little.",
-    affectedDeliverable: detail.analysis?.deliverables[0] ?? "Whole job",
+    affectedDeliverable: detail.analysis?.effective.deliverables[0]?.name ?? "Whole job",
   })
   detail = await repo.getJob(job.id)
   assert.equal(detail?.revisions[0]?.approvalStatus, "pending")
@@ -242,17 +250,8 @@ async function main() {
       }),
     /No request was sent/,
   )
-  assert.throws(
-    () =>
-      analyzeBrief({
-        rawBrief: CLEAN_BRIEF,
-        budgetCents: 180_000,
-        deadlineIso: null,
-        assetLabels: [],
-      }),
-    /No request was sent/,
-  )
   process.env.STUDIO_OPERATOR_MODE = "mock"
+  process.env.STUDIO_ANALYSIS_MODE = "mock"
 
   const listed = await repo.listSummaries()
   assert.ok(listed.some((item) => item.id === job.id && item.status === "delivered"))

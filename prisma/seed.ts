@@ -4,6 +4,8 @@
  */
 import { PrismaClient } from "@prisma/client"
 
+import { finalizeAnalysis, type AnalysisDraft, type StoredAnalysis } from "../src/lib/analysis"
+import { catalogPrices } from "../src/server/services/analyze-brief"
 import { mockOutputUrl } from "../src/server/services/providers"
 import { MODEL_CATALOG } from "../src/server/services/models"
 
@@ -47,6 +49,49 @@ function step(input: {
     estimatedTotalCents: input.model.unitCostCents * input.attempts,
     approvalStatus: input.approvalStatus,
     status: input.status,
+  }
+}
+
+function analysisColumns(input: {
+  draft: AnalysisDraft
+  budgetCents: number
+  channelFeeBps: number
+  contingencyBps: number
+  deadlineIso: string
+  nowIso: string
+  editedFrom?: (document: StoredAnalysis) => StoredAnalysis
+}) {
+  const document = finalizeAnalysis(input.draft, {
+    clientPriceCents: input.budgetCents,
+    channelFeeBps: input.channelFeeBps,
+    contingencyBps: input.contingencyBps,
+    deadlineIso: input.deadlineIso,
+    now: new Date(input.nowIso),
+    catalog: catalogPrices(),
+  })
+  const edited = input.editedFrom ? input.editedFrom(document) : null
+  const effective = edited ?? document
+  return {
+    originalJson: JSON.stringify(document),
+    editedJson: edited ? JSON.stringify(edited) : null,
+    decision: effective.decision,
+    confidence: document.confidence,
+    modelLabel: "GPT-6 Astra (gpt-6-astra)",
+    provider: "mock",
+    createdAt: at(input.nowIso),
+  }
+}
+
+function workflow(
+  steps: Array<[string, AnalysisDraft["proposedWorkflow"][number]["capability"], string, number]>,
+): Pick<AnalysisDraft, "proposedWorkflow" | "estimatedAttemptsByStep"> {
+  return {
+    proposedWorkflow: steps.map(([name, capability, purpose]) => ({ name, capability, purpose })),
+    estimatedAttemptsByStep: steps.map(([name, capability, , attempts]) => ({
+      stepName: name,
+      capability,
+      attempts,
+    })),
   }
 }
 
@@ -114,36 +159,77 @@ Budget is $2,200. Deadline 18 Oct 2026. Please confirm scope before production.`
         ],
       },
       analysis: {
-        create: {
-          deliverables: json([
-            "45-second concept film, 1920x1080",
-            "15-second 1080x1920 cutdown",
-            "Four hero stills",
-            "One original voice line",
-          ]),
-          dimensions: json(["1920x1080", "1080x1920", "16:9", "3:2"]),
-          durations: json(["45-second", "15-second"]),
-          referenceNotes: json([
-            "Dawn platform reference",
-            "Empty concrete platform at dawn",
-            "Round steel case, cream dial",
-          ]),
-          exactText: json(["Northline", "Built for the hour before weather."]),
-          brandConstraints: json([
-            "Oxidized brass #8A6A3B, night navy #141820, fog #D5D8DC",
-            "No diamond sparkle or luxury clichés",
-            "Wordmark only at the end",
-            "Original score, no library tracks",
-          ]),
-          rightsConcerns: json([]),
-          missingInformation: json([]),
-          confidence: 0.9,
-          decision: "accept",
-          rationale:
-            "The pasted email names duration, frames, exact lines, palette, and ownership. It is specific enough to plan. This recommendation does not message the client or submit a proposal.",
-          modelLabel: "GPT-6 Astra (gpt-6-astra)",
-          createdAt: at("2026-09-12T15:24:00.000Z"),
-        },
+        create: analysisColumns({
+          budgetCents: 220_000,
+          channelFeeBps: 0,
+          contingencyBps: 1500,
+          deadlineIso: "2026-10-18T12:00:00.000Z",
+          nowIso: "2026-09-12T15:24:00.000Z",
+          draft: {
+            jobType: "motion",
+            conciseSummary:
+              "A 45-second concept film with a vertical cutdown, four stills, and one original line. Catalog prices decide the margin.",
+            deliverables: [
+              {
+                name: "45-second concept film",
+                format: "motion",
+                aspectRatio: "16:9",
+                duration: "45 seconds",
+                resolution: "1920x1080",
+                exactText: ["Northline", "Built for the hour before weather."],
+              },
+              {
+                name: "15-second cutdown",
+                format: "motion",
+                aspectRatio: "9:16",
+                duration: "15 seconds",
+                resolution: "1080x1920",
+                exactText: ["Northline", "Built for the hour before weather."],
+              },
+              {
+                name: "Four hero stills",
+                format: "still",
+                aspectRatio: "3:2",
+                duration: "",
+                resolution: "3:2 stills",
+                exactText: [],
+              },
+              {
+                name: "Original voice line",
+                format: "audio",
+                aspectRatio: "",
+                duration: "one line",
+                resolution: "",
+                exactText: ["Built for the hour before weather."],
+              },
+            ],
+            suppliedAssets: ["Dawn platform reference", "Case study still"],
+            missingAssets: [],
+            questionsForClient: [],
+            brandConstraints: [
+              "Oxidized brass #8A6A3B, night navy #141820, fog #D5D8DC",
+              "No diamond sparkle or luxury clichés",
+              "Wordmark only at the end",
+              "Original score, no library tracks",
+            ],
+            rightsAndConsentFlags: [],
+            technicalRisks: ["The 9:16 cutdown needs its own assembly pass."],
+            revisionRisk: "low",
+            confidence: 90,
+            decision: "accept",
+            decisionReasons: [
+              "Duration, frames, exact lines, and ownership are in the pasted email.",
+            ],
+            assumptions: ["Fictional talent only. The client owns the product design."],
+            ...workflow([
+              ["Key stills", "image", "Platform, case, dial macro, and the end frame.", 6],
+              ["Motion coverage", "video", "45-second master coverage plus safety takes.", 10],
+              ["Voice line", "voice", "One original line. No impersonation.", 2],
+              ["Assembly", "editing", "Cut the 45-second master and the 15-second vertical.", 2],
+              ["Finish", "finishing", "Grade, place the wordmark, export both frames.", 2],
+            ]),
+          },
+        }),
       },
       steps: {
         create: [
@@ -281,26 +367,44 @@ Square, for Instagram. Warm, handheld, no people.
 Budget is $350. Need it this weekend.
 End card should have the bakery name. I'll send the logo later if I find it.`,
       analysis: {
-        create: {
-          deliverables: json(["6-second oven loop", "Square end card"]),
-          dimensions: json(["1:1"]),
-          durations: json(["6-second"]),
-          referenceNotes: json([]),
-          exactText: json([]),
-          brandConstraints: json(["Warm, handheld, no people"]),
-          rightsConcerns: json([]),
-          missingInformation: json([
-            "Exact on-screen text is not quoted",
-            "Logo file has not been sent",
-            "Pixel dimensions are not stated",
-          ]),
-          confidence: 0.46,
-          decision: "review",
-          rationale:
-            "A person should review this before production. The price is thin for motion, the end card has no quoted line, and the logo is still missing. This recommendation does not message the client or submit a proposal.",
-          modelLabel: "GPT-6 Astra (gpt-6-astra)",
-          createdAt: at("2026-09-24T09:48:00.000Z"),
-        },
+        create: analysisColumns({
+          budgetCents: 35_000,
+          channelFeeBps: 2000,
+          contingencyBps: 1500,
+          deadlineIso: "2026-09-28T12:00:00.000Z",
+          nowIso: "2026-09-24T09:48:00.000Z",
+          draft: {
+            jobType: "motion",
+            conciseSummary: "A 6-second square loaf loop. The end card and logo are not ready to produce.",
+            deliverables: [
+              {
+                name: "6-second oven loop",
+                format: "motion",
+                aspectRatio: "1:1",
+                duration: "6 seconds",
+                resolution: "square",
+                exactText: [],
+              },
+            ],
+            suppliedAssets: [],
+            missingAssets: ["Client logo file"],
+            questionsForClient: ["What is the exact end-card text, character for character?"],
+            brandConstraints: ["Warm, handheld, no people"],
+            rightsAndConsentFlags: ["Exact logo is required and has not been supplied."],
+            technicalRisks: [],
+            revisionRisk: "medium",
+            confidence: 46,
+            decision: "human_review",
+            decisionReasons: ["The logo and the end-card line are still missing."],
+            assumptions: ["Attempt counts are estimates. The desk prices them from the catalog."],
+            ...workflow([
+              ["Key stills", "image", "Oven light and loaf stills.", 2],
+              ["Motion coverage", "video", "One 6-second loop with a safety take.", 2],
+              ["Assembly", "editing", "Cut the loop and leave room for the end card.", 1],
+              ["Finish", "finishing", "Grade and hold a space for the missing logo.", 1],
+            ]),
+          },
+        }),
       },
       steps: {
         create: [
@@ -383,21 +487,55 @@ On-screen text: "Hollow Current" only.
 Original audio. We will send a greyscale logo.
 Budget $1,200. First pass in 10 days.`,
       analysis: {
-        create: {
-          deliverables: json(["12-second title sequence"]),
-          dimensions: json(["1920x1080"]),
-          durations: json(["12 seconds"]),
-          referenceNotes: json(["Greyscale logo incoming"]),
-          exactText: json(["Hollow Current"]),
-          brandConstraints: json(["Abstract water and a lantern", "No characters", "No dialogue"]),
-          rightsConcerns: json([]),
-          missingInformation: json([]),
-          confidence: 0.84,
-          decision: "accept",
-          rationale:
-            "The sequence is short, the frame and the only line of text are explicit, and the price covers the mock catalog. Workflow approval is still a separate human step. This recommendation does not message the client.",
-          modelLabel: "GPT-6 Astra (gpt-6-astra)",
-        },
+        create: analysisColumns({
+          budgetCents: 120_000,
+          channelFeeBps: 0,
+          contingencyBps: 1500,
+          deadlineIso: "2026-10-06T12:00:00.000Z",
+          nowIso: "2026-09-18T13:10:00.000Z",
+          editedFrom: (document) => ({
+            ...document,
+            missingAssets: [],
+            questionsForClient: [],
+            rightsAndConsentFlags: [],
+            decision: "accept",
+            decisionReasons: [
+              "The sequence, frame, and title are explicit.",
+              "A person confirmed the greyscale logo will arrive before finishing and accepted the job for planning.",
+            ],
+          }),
+          draft: {
+            jobType: "motion",
+            conciseSummary: "A 12-second abstract title sequence. The greyscale logo file is not in hand yet.",
+            deliverables: [
+              {
+                name: "12-second title sequence",
+                format: "motion",
+                aspectRatio: "16:9",
+                duration: "12 seconds",
+                resolution: "1920x1080",
+                exactText: ["Hollow Current"],
+              },
+            ],
+            suppliedAssets: ["Director description of abstract water and a lantern"],
+            missingAssets: ["Greyscale logo file"],
+            questionsForClient: ["When will the greyscale logo file arrive?"],
+            brandConstraints: ["Abstract water and a lantern", "No characters", "No dialogue"],
+            rightsAndConsentFlags: ["Exact logo file has not arrived."],
+            technicalRisks: [],
+            revisionRisk: "medium",
+            confidence: 74,
+            decision: "human_review",
+            decisionReasons: ["The title and frame are clear, but the logo file is outstanding."],
+            assumptions: ["No characters and no dialogue."],
+            ...workflow([
+              ["Key stills", "image", "Lantern and water stills before any motion.", 4],
+              ["Motion coverage", "video", "12 seconds of abstract coverage plus one safety take.", 4],
+              ["Assembly", "editing", "Lock the 12-second sequence.", 1],
+              ["Finish", "finishing", "Grade and place the title.", 1],
+            ]),
+          },
+        }),
       },
       steps: {
         create: [
@@ -482,21 +620,52 @@ Shots: boarding at dusk, window light, arrival at dawn.
 On-screen text: "Atlas Rail" and "Overnight".
 Budget $900. Deadline in 12 days.`,
       analysis: {
-        create: {
-          deliverables: json(["15-second 16:9 teaser", "9:16 cut"]),
-          dimensions: json(["16:9", "9:16"]),
-          durations: json(["15-second"]),
-          referenceNotes: json(["Boarding at dusk", "Window light", "Arrival at dawn"]),
-          exactText: json(["Atlas Rail", "Overnight"]),
-          brandConstraints: json(["Silent picture", "No voice"]),
-          rightsConcerns: json([]),
-          missingInformation: json([]),
-          confidence: 0.8,
-          decision: "accept",
-          rationale:
-            "The teaser has a duration, two frames, and exact words. The Upwork fee is only a margin assumption. Nothing is submitted back to the marketplace.",
-          modelLabel: "GPT-6 Astra (gpt-6-astra)",
-        },
+        create: analysisColumns({
+          budgetCents: 90_000,
+          channelFeeBps: 1000,
+          contingencyBps: 1500,
+          deadlineIso: "2026-10-08T12:00:00.000Z",
+          nowIso: "2026-09-21T08:20:00.000Z",
+          draft: {
+            jobType: "motion",
+            conciseSummary: "A silent 15-second travel teaser in 16:9 and 9:16, with two exact lines.",
+            deliverables: [
+              {
+                name: "15-second 16:9 teaser",
+                format: "motion",
+                aspectRatio: "16:9",
+                duration: "15 seconds",
+                resolution: "1920x1080",
+                exactText: ["Atlas Rail", "Overnight"],
+              },
+              {
+                name: "9:16 cut",
+                format: "motion",
+                aspectRatio: "9:16",
+                duration: "15 seconds",
+                resolution: "1080x1920",
+                exactText: ["Atlas Rail", "Overnight"],
+              },
+            ],
+            suppliedAssets: ["Boarding at dusk", "Window light", "Arrival at dawn"],
+            missingAssets: [],
+            questionsForClient: [],
+            brandConstraints: ["Silent picture", "No voice"],
+            rightsAndConsentFlags: [],
+            technicalRisks: ["Two aspect ratios need separate finishing."],
+            revisionRisk: "low",
+            confidence: 80,
+            decision: "accept",
+            decisionReasons: ["Duration, both frames, and the exact words are in the paste."],
+            assumptions: ["The channel fee is a planning assumption. Nothing is sent back to the marketplace."],
+            ...workflow([
+              ["Key stills", "image", "Dusk platform, window, and dawn arrival stills.", 3],
+              ["Motion coverage", "video", "15-second silent coverage.", 6],
+              ["Assembly", "editing", "Cut 16:9 and 9:16 silent pictures.", 1],
+              ["Finish", "finishing", "Grade and place the two lines of text.", 1],
+            ]),
+          },
+        }),
       },
       steps: {
         create: [
@@ -620,26 +789,47 @@ Budget $640.`,
         ],
       },
       analysis: {
-        create: {
-          deliverables: json(["Eight product stills"]),
-          dimensions: json(["2400x3000"]),
-          durations: json([]),
-          referenceNotes: json(["Maker photo of the pour-over"]),
-          exactText: json([]),
-          brandConstraints: json([
-            "Neutral plaster wall",
-            "Morning side light",
-            "No people",
-            "No unowned props",
-          ]),
-          rightsConcerns: json([]),
-          missingInformation: json([]),
-          confidence: 0.88,
-          decision: "accept",
-          rationale:
-            "A stills-only job with a frame size, a subject the client owns, and a clear price. Delivery was recorded inside Studio Operator.",
-          modelLabel: "GPT-6 Astra (gpt-6-astra)",
-        },
+        create: analysisColumns({
+          budgetCents: 64_000,
+          channelFeeBps: 0,
+          contingencyBps: 1500,
+          deadlineIso: "2026-09-12T12:00:00.000Z",
+          nowIso: "2026-09-02T11:20:00.000Z",
+          draft: {
+            jobType: "stills",
+            conciseSummary: "Eight product stills of a pour-over the client owns, at a stated frame size.",
+            deliverables: [
+              {
+                name: "Eight product stills",
+                format: "still",
+                aspectRatio: "4:5",
+                duration: "",
+                resolution: "2400x3000",
+                exactText: [],
+              },
+            ],
+            suppliedAssets: ["Maker photo of the pour-over"],
+            missingAssets: [],
+            questionsForClient: [],
+            brandConstraints: [
+              "Neutral plaster wall",
+              "Morning side light",
+              "No people",
+              "No unowned props",
+            ],
+            rightsAndConsentFlags: [],
+            technicalRisks: [],
+            revisionRisk: "low",
+            confidence: 88,
+            decision: "accept",
+            decisionReasons: ["The subject, frame size, and ownership are explicit."],
+            assumptions: ["Delivery was recorded inside Studio Operator."],
+            ...workflow([
+              ["Key stills", "image", "Eight views of the pour-over.", 8],
+              ["Finish", "finishing", "Match the plaster wall and morning light.", 1],
+            ]),
+          },
+        }),
       },
       steps: {
         create: [
@@ -790,25 +980,46 @@ Palette is forest green. Deadline is the end of next month. Budget $400.`,
       rawBrief: `I want a 15-second ad that looks exactly like Zendaya opening our can, wearing a Nike jacket, with the Beatles song Come Together under it.
 Budget $200. Tomorrow.`,
       analysis: {
-        create: {
-          deliverables: json(["15-second ad"]),
-          dimensions: json([]),
-          durations: json(["15-second"]),
-          referenceNotes: json([]),
-          exactText: json([]),
-          brandConstraints: json([]),
-          rightsConcerns: json([
-            "Real-person likeness",
-            "Third-party apparel mark",
-            "Copyrighted song",
-          ]),
-          missingInformation: json(["Frame size is not stated", "Deadline is overnight"]),
-          confidence: 0.9,
-          decision: "reject",
-          rationale:
-            "Decline this job. It asks for a real person's likeness, a third-party mark, and a copyrighted song. No proposal was sent.",
-          modelLabel: "GPT-6 Astra (gpt-6-astra)",
-        },
+        create: analysisColumns({
+          budgetCents: 20_000,
+          channelFeeBps: 2000,
+          contingencyBps: 1500,
+          deadlineIso: "2026-09-26T12:00:00.000Z",
+          nowIso: "2026-09-23T19:16:00.000Z",
+          draft: {
+            jobType: "motion",
+            conciseSummary: "A 15-second spot that asks for a protected likeness, a trademark, and a copyrighted song.",
+            deliverables: [
+              {
+                name: "15-second ad",
+                format: "motion",
+                aspectRatio: "",
+                duration: "15 seconds",
+                resolution: "",
+                exactText: [],
+              },
+            ],
+            suppliedAssets: [],
+            missingAssets: ["Frame size"],
+            questionsForClient: ["Which frame size should the master use?"],
+            brandConstraints: [],
+            rightsAndConsentFlags: [
+              "The brief asks for a likeness that looks exactly like Zendaya.",
+              "Nike jacket trademark wardrobe.",
+              "Licensed music: the Beatles song Come Together.",
+            ],
+            technicalRisks: [],
+            revisionRisk: "high",
+            confidence: 91,
+            decision: "reject",
+            decisionReasons: ["This asks for deceptive impersonation and uncleared third-party material."],
+            assumptions: ["No proposal will be sent."],
+            ...workflow([
+              ["Motion coverage", "video", "Would cover 15 seconds if the job were lawful.", 4],
+              ["Finish", "finishing", "Would finish a master if the job were lawful.", 1],
+            ]),
+          },
+        }),
       },
       approvals: {
         create: [

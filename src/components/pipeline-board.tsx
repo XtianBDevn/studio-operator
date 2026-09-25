@@ -5,6 +5,7 @@ import { formatMoney, formatPercentFromBps } from "@/lib/money"
 import { computeProfitability } from "@/lib/profitability"
 import { sourceLabel } from "@/lib/sources"
 import { JOB_STATUSES, statusLabel, statusTone } from "@/lib/statuses"
+import { decisionLabel } from "@/lib/analysis"
 import type { JobSummary } from "@/lib/types"
 import { Badge } from "@/components/ui/badge"
 
@@ -62,9 +63,7 @@ function JobCard({ job }: { job: JobSummary }) {
           {statusLabel(job.status)}
         </Badge>
         {job.decision ? (
-          <Badge variant="outline" className="capitalize">
-            {job.decision}
-          </Badge>
+          <Badge variant="outline">{decisionLabel(job.decision)}</Badge>
         ) : null}
       </div>
       {job.hasPlan ? (

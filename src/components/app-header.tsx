@@ -5,7 +5,15 @@ import { buttonVariants } from "@/components/ui/button"
 import { PRODUCT_GUARDRAILS } from "@/lib/guardrails"
 import { cn } from "@/lib/utils"
 
-export function AppHeader({ mode, model }: { mode: "mock" | "live"; model: string }) {
+export function AppHeader({
+  mode,
+  model,
+  analysisProvider,
+}: {
+  mode: "mock" | "live"
+  model: string
+  analysisProvider: "mock" | "openai"
+}) {
   return (
     <header className="border-b bg-card/80">
       <div className="mx-auto flex w-full max-w-[1440px] items-center justify-between gap-4 px-4 py-3 md:px-6">
@@ -17,7 +25,8 @@ export function AppHeader({ mode, model }: { mode: "mock" | "live"; model: strin
         </Link>
         <div className="flex items-center gap-2">
           <p className="hidden text-xs text-muted-foreground sm:block">
-            {mode === "mock" ? "Mock mode" : "Live stub"} · {model}
+            {analysisProvider === "openai" ? "Astra live" : "Astra mock"} · {model}
+            {mode === "live" ? " · generation live stub" : ""}
           </p>
           <Link href="/jobs/new" className={cn(buttonVariants({ size: "sm" }))}>
             <Plus />

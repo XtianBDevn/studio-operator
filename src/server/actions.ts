@@ -20,6 +20,7 @@ import {
   rejectJob,
   requestWorkflowChange,
   runGeneration,
+  saveHumanAnalysis,
   setHumanDecision,
   updateCommercials,
 } from "@/server/studio"
@@ -97,7 +98,7 @@ export async function analyzeAction(formData: FormData) {
 export async function decisionAction(formData: FormData) {
   const jobId = readId(formData)
   const decision = String(formData.get("decision") ?? "") as Decision
-  if (decision !== "accept" && decision !== "review" && decision !== "reject") {
+  if (decision !== "accept" && decision !== "human_review" && decision !== "reject") {
     back(jobId, { error: "Unknown decision.", tab: "decision" })
   }
   await perform(jobId, "decision", "Decision saved.", () =>
@@ -208,6 +209,26 @@ export async function rejectAction(formData: FormData) {
   await perform(jobId, "decision", "Job rejected. Nothing was sent to a marketplace.", () =>
     rejectJob(jobs, jobId),
   )
+}
+
+export async function reviewAnalysisAction(formData: FormData) {
+  const jobId = readId(formData)
+  const intentRaw = String(formData.get("intent") ?? "save")
+  const intent = intentRaw === "approve" || intentRaw === "reject" ? intentRaw : "save"
+  const notice =
+    intent === "approve"
+      ? "Analysis approved for planning. Workflow and budget still need a person."
+      : intent === "reject"
+        ? "Job rejected. Nothing was sent to a marketplace."
+        : "Edited analysis saved. The desk recalculated the decision."
+  try {
+    const raw = JSON.parse(String(formData.get("analysis") ?? "")) as unknown
+    await saveHumanAnalysis(jobs, jobId, raw, intent)
+  } catch (error) {
+    if (error && typeof error === "object" && "digest" in error) throw error
+    redirect(`/jobs/${jobId}/review?error=${encodeURIComponent(messageFrom(error))}`)
+  }
+  redirect(`/jobs/${jobId}/review?notice=${encodeURIComponent(notice)}`)
 }
 
 export async function noteAction(formData: FormData) {

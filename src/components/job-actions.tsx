@@ -1,3 +1,5 @@
+import Link from "next/link"
+
 import { centsToDollarInput, formatMoney } from "@/lib/money"
 import { computeProfitability } from "@/lib/profitability"
 import { deskActions } from "@/lib/workflow-policy"
@@ -16,6 +18,8 @@ import {
   workflowChangeAction,
 } from "@/server/actions"
 import { SubmitButton } from "@/components/submit-button"
+import { buttonVariants } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 
 const fieldClass =
   "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
@@ -34,6 +38,11 @@ export function JobActions({ job }: { job: JobDetail }) {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap gap-2">
+        {job.analysis ? (
+          <Link href={`/jobs/${job.id}/review`} className={cn(buttonVariants({ size: "sm", variant: "outline" }))}>
+            Review analysis
+          </Link>
+        ) : null}
         {!job.analysis && actions.canAnalyze ? (
           <form action={analyzeAction}>
             <input type="hidden" name="jobId" value={job.id} />

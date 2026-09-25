@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client"
 
+import { validateStoredAnalysis, type StoredAnalysis } from "@/lib/analysis"
 import { StudioError } from "@/lib/errors"
 import { parseStringList, toIso } from "@/lib/json"
 import { isSourceId, type SourceId } from "@/lib/sources"
@@ -24,7 +25,6 @@ import type {
   JobPatch,
   JobRepository,
 } from "@/server/repositories/job-repository"
-import type { AnalysisDraft } from "@/server/services/analyze-brief"
 import type { PlannedStep } from "@/server/services/plan-workflow"
 
 const detailInclude = {
@@ -53,8 +53,15 @@ function asStatus(value: string): JobStatus {
 }
 
 function asDecision(value: string): Decision {
-  if (value !== "accept" && value !== "review" && value !== "reject") {
+  if (value !== "accept" && value !== "human_review" && value !== "reject") {
     throw new StudioError(`Unknown decision: ${value}`)
+  }
+  return value
+}
+
+function asProvider(value: string): "mock" | "openai" {
+  if (value !== "mock" && value !== "openai") {
+    throw new StudioError(`Unknown analysis provider: ${value}`)
   }
   return value
 }
@@ -147,20 +154,18 @@ export class PrismaJobRepository implements JobRepository {
     })
   }
 
-  async saveAnalysis(jobId: string, analysis: AnalysisDraft): Promise<void> {
+  async saveAnalysis(
+    jobId: string,
+    input: { document: StoredAnalysis; modelLabel: string; provider: "mock" | "openai" },
+  ): Promise<void> {
+    const document = validateStoredAnalysis(input.document)
     const data = {
-      deliverables: JSON.stringify(analysis.deliverables),
-      dimensions: JSON.stringify(analysis.dimensions),
-      durations: JSON.stringify(analysis.durations),
-      referenceNotes: JSON.stringify(analysis.referenceNotes),
-      exactText: JSON.stringify(analysis.exactText),
-      brandConstraints: JSON.stringify(analysis.brandConstraints),
-      rightsConcerns: JSON.stringify(analysis.rightsConcerns),
-      missingInformation: JSON.stringify(analysis.missingInformation),
-      confidence: analysis.confidence,
-      decision: analysis.decision,
-      rationale: analysis.rationale,
-      modelLabel: analysis.modelLabel,
+      originalJson: JSON.stringify(document),
+      editedJson: null,
+      decision: document.decision,
+      confidence: document.confidence,
+      modelLabel: input.modelLabel,
+      provider: input.provider,
     }
     await this.db.briefAnalysis.upsert({
       where: { jobId },
@@ -169,10 +174,15 @@ export class PrismaJobRepository implements JobRepository {
     })
   }
 
-  async updateDecision(jobId: string, decision: Decision, rationale: string): Promise<void> {
+  async saveEditedAnalysis(jobId: string, document: StoredAnalysis): Promise<void> {
+    const edited = validateStoredAnalysis(document)
     await this.db.briefAnalysis.update({
       where: { jobId },
-      data: { decision, rationale },
+      data: {
+        editedJson: JSON.stringify(edited),
+        decision: edited.decision,
+        confidence: edited.confidence,
+      },
     })
   }
 
@@ -405,35 +415,35 @@ export class PrismaJobRepository implements JobRepository {
 
 function mapAnalysis(analysis: {
   id: string
-  deliverables: string
-  dimensions: string
-  durations: string
-  referenceNotes: string
-  exactText: string
-  brandConstraints: string
-  rightsConcerns: string
-  missingInformation: string
+  originalJson: string
+  editedJson: string | null
   confidence: number
   decision: string
-  rationale: string
   modelLabel: string
+  provider: string
   createdAt: Date
   updatedAt: Date
 }): BriefAnalysisRecord {
+  let original: StoredAnalysis
+  let edited: StoredAnalysis | null = null
+  try {
+    original = validateStoredAnalysis(JSON.parse(analysis.originalJson) as unknown)
+    edited = analysis.editedJson
+      ? validateStoredAnalysis(JSON.parse(analysis.editedJson) as unknown)
+      : null
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Invalid analysis."
+    throw new StudioError(`Stored analysis could not be read. ${message}`)
+  }
   return {
     id: analysis.id,
-    deliverables: parseStringList(analysis.deliverables),
-    dimensions: parseStringList(analysis.dimensions),
-    durations: parseStringList(analysis.durations),
-    referenceNotes: parseStringList(analysis.referenceNotes),
-    exactText: parseStringList(analysis.exactText),
-    brandConstraints: parseStringList(analysis.brandConstraints),
-    rightsConcerns: parseStringList(analysis.rightsConcerns),
-    missingInformation: parseStringList(analysis.missingInformation),
-    confidence: analysis.confidence,
+    original,
+    edited,
+    effective: edited ?? original,
     decision: asDecision(analysis.decision),
-    rationale: analysis.rationale,
+    confidence: analysis.confidence,
     modelLabel: analysis.modelLabel,
+    provider: asProvider(analysis.provider),
     createdAt: analysis.createdAt.toISOString(),
     updatedAt: analysis.updatedAt.toISOString(),
   }

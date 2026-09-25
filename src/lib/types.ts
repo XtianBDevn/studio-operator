@@ -1,7 +1,8 @@
+import type { StoredAnalysis } from "@/lib/analysis"
 import type { JobStatus } from "@/lib/statuses"
 import type { SourceId } from "@/lib/sources"
 
-export const DECISIONS = ["accept", "review", "reject"] as const
+export const DECISIONS = ["accept", "human_review", "reject"] as const
 export type Decision = (typeof DECISIONS)[number]
 
 export const GATE_KINDS = [
@@ -25,18 +26,13 @@ export type ReferenceAssetRecord = {
 
 export type BriefAnalysisRecord = {
   id: string
-  deliverables: string[]
-  dimensions: string[]
-  durations: string[]
-  referenceNotes: string[]
-  exactText: string[]
-  brandConstraints: string[]
-  rightsConcerns: string[]
-  missingInformation: string[]
-  confidence: number
+  original: StoredAnalysis
+  edited: StoredAnalysis | null
+  effective: StoredAnalysis
   decision: Decision
-  rationale: string
+  confidence: number
   modelLabel: string
+  provider: "mock" | "openai"
   createdAt: string
   updatedAt: string
 }

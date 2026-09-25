@@ -1,7 +1,7 @@
-import type { Decision, GateKind, JobDetail, JobSummary } from "@/lib/types"
+import type { StoredAnalysis } from "@/lib/analysis"
+import type { GateKind, JobDetail, JobSummary } from "@/lib/types"
 import type { SourceId } from "@/lib/sources"
 import type { JobStatus } from "@/lib/statuses"
-import type { AnalysisDraft } from "@/server/services/analyze-brief"
 import type { PlannedStep } from "@/server/services/plan-workflow"
 
 export type CreateJobInput = {
@@ -59,8 +59,11 @@ export interface JobRepository {
   getJob(id: string): Promise<JobDetail | null>
   createJob(input: CreateJobInput): Promise<JobDetail>
   updateJob(id: string, patch: JobPatch): Promise<void>
-  saveAnalysis(jobId: string, analysis: AnalysisDraft): Promise<void>
-  updateDecision(jobId: string, decision: Decision, rationale: string): Promise<void>
+  saveAnalysis(
+    jobId: string,
+    input: { document: StoredAnalysis; modelLabel: string; provider: "mock" | "openai" },
+  ): Promise<void>
+  saveEditedAnalysis(jobId: string, document: StoredAnalysis): Promise<void>
   replaceSteps(jobId: string, steps: PlannedStep[]): Promise<void>
   updateAllSteps(
     jobId: string,
