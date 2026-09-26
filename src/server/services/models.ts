@@ -1,6 +1,12 @@
 import { PLANNING_RATES } from "@/lib/planning-rates"
 import { catalogById } from "@/lib/router-catalog"
 
+/**
+ * Default routable id for each capability, priced at layer-1 planning rates.
+ * Appearing here does not make a model live-submittable. Live submit is layer 3
+ * in `src/lib/live-workflows.ts`: SOUL V2 and Kling 3.0 Standard text-to-video only.
+ */
+
 export type ModelKind = "image" | "video" | "voice" | "editing" | "finishing"
 
 export type CatalogModel = {
@@ -11,11 +17,6 @@ export type CatalogModel = {
   unitLabel: string
 }
 
-/**
- * Default connected models for each capability.
- * Unit costs are desk planning rates. The router may select another documented id
- * at the same capability rate. Live USD still comes from the estimate API.
- */
 export const MODEL_CATALOG: Record<ModelKind, CatalogModel> = {
   image: {
     id: "higgsfield-ai/soul/v2/standard",

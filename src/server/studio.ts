@@ -1,32 +1,68 @@
-import { finalizeAnalysis, validateAnalysisDraft, type StoredAnalysis } from "@/lib/analysis"
+/**
+ * Job state machine for brief → qualify → price → approve → route → generate → QA → deliver.
+ * Status transitions stay here. Policy is called from the module owners in
+ * `src/server/modules/owners.ts`: analysis, catalog, router, provider, QA, autonomy, audit.
+ */
+import { validateAnalysisDraft, type StoredAnalysis } from "@/lib/analysis"
 import { demoById, demoDeadline, isDemoJobId } from "@/lib/demos"
 import { assertAllowedOperation } from "@/lib/guardrails"
-import { evaluateQa, isConditionalRepair, type QaEvaluation } from "@/lib/qa"
+import { isConditionalRepair } from "@/lib/qa"
 import { recordingPause, type RecordingSnapshot } from "@/lib/recording"
 import { StudioError } from "@/lib/errors"
 import { computeProfitability } from "@/lib/profitability"
+import { applyOverride, linesFromStored, maxSpendCents, restage } from "@/lib/route"
 import { defaultChannelFeeBps, isSourceId, type SourceId } from "@/lib/sources"
 import type { Decision, JobDetail } from "@/lib/types"
 import { estimatedGenerationCents, spentGenerationCents } from "@/lib/types"
 import { canRebuildPlan, hasOpenGate } from "@/lib/workflow-policy"
-import { clearJobSupervision } from "@/server/repositories/autonomy-repository"
 import type { JobRepository } from "@/server/repositories/job-repository"
-import { catalogPrices, produceAnalysis, targetMarginBpsFromEnv } from "@/server/services/analyze-brief"
+import { addAudit, type AuditKind } from "@/server/services/audit"
+import { finalizeDeskAnalysis, produceAnalysis } from "@/server/services/analyze-brief"
+import { clearJobSupervision } from "@/server/services/autonomy"
 import { draftClientDeliveryNote } from "@/server/services/delivery-note"
-import { MODEL_CATALOG } from "@/server/services/models"
-import { planFromAnalysis } from "@/server/services/plan-from-analysis"
-import { applyOverride, linesFromStored, maxSpendCents, restage } from "@/lib/route"
-import { requestHiggsfieldGeneration, localPreviewGeneration } from "@/server/services/providers"
 import {
   cancelGeneration,
   refreshGenerationStatus,
   retryGeneration,
-  runLiveSteps,
 } from "@/server/services/live-generation"
-import { readHiggsfieldCredentials } from "@/server/services/higgsfield"
+import { planFromAnalysis, plannedStepsFromRouteLines } from "@/server/services/plan-from-analysis"
+import {
+  assertLiveStepsSubmittable,
+  recordFinishingRevision,
+  runProviderSteps,
+  stepsAwaitingOutput,
+} from "@/server/services/provider-run"
+import {
+  evaluateJobQa,
+  marginAfter,
+  persistQa,
+  qaRepairDetail,
+  runApprovedRepair,
+} from "@/server/services/qa-desk"
 import { recommendRevision } from "@/server/services/revisions"
 
 const DEFAULT_CONTINGENCY_BPS = 1500
+
+async function recordAudit(jobId: string, kind: AuditKind, summary: string, detail = ""): Promise<void> {
+  await addAudit({ jobId, kind, summary, detail })
+}
+
+function routeDecisionDetail(
+  steps: Array<{
+    name: string
+    selectedModel: string
+    estimatedAttempts: number
+    unitCostCents: number
+    estimatedTotalCents: number
+  }>,
+): string {
+  return steps
+    .map(
+      (step) =>
+        `${step.name}: ${step.selectedModel} ${step.estimatedAttempts} x ${step.unitCostCents} = ${step.estimatedTotalCents}`,
+    )
+    .join("\n")
+}
 
 async function mustGet(repo: JobRepository, id: string): Promise<JobDetail> {
   const job = await repo.getJob(id)
@@ -99,17 +135,22 @@ export async function analyzeJob(repo: JobRepository, jobId: string): Promise<vo
   await repo.saveAnalysis(jobId, analysis)
 
   if (analysis.document.rightsAndConsentFlags.length > 0) {
+    const detail = analysis.document.rightsAndConsentFlags.join(" ")
     await repo.openGate({
       jobId,
       kind: "rights",
       summary: "Rights concern needs a person",
-      detail: analysis.document.rightsAndConsentFlags.join(" "),
+      detail,
     })
+    await recordAudit(jobId, "escalation", "Rights concern needs a person", detail)
   }
 
   await repo.updateJob(jobId, {
     status: analysis.document.decision === "reject" ? "rejected" : "needs_review",
   })
+  if (analysis.document.decision === "reject") {
+    await recordAudit(jobId, "escalation", "Refused the job", "Analysis refused the job. No proposal was sent.")
+  }
 }
 
 export async function setHumanDecision(
@@ -134,6 +175,11 @@ export async function setHumanDecision(
   await repo.updateJob(jobId, {
     status: decision === "reject" ? "rejected" : "needs_review",
   })
+  if (decision === "reject") {
+    await recordAudit(jobId, "escalation", "Refused the job", note)
+  } else if (decision === "accept") {
+    await recordAudit(jobId, "approval", "A person accepted the job for planning", note)
+  }
 }
 
 export async function saveHumanAnalysis(
@@ -160,13 +206,11 @@ export async function saveHumanAnalysis(
     ...draft,
     decisionReasons: draft.decisionReasons.filter((reason) => !reason.startsWith("Desk:")),
   }
-  let document = finalizeAnalysis(draft, {
+  let document = finalizeDeskAnalysis(draft, {
     clientPriceCents: job.budgetCents,
     channelFeeBps: job.channelFeeBps,
     contingencyBps: job.contingencyBps,
     deadlineIso: job.deadline,
-    targetMarginBps: targetMarginBpsFromEnv(),
-    catalog: catalogPrices(),
   })
   if (intent === "approve") {
     document = withHumanDecision(
@@ -184,16 +228,23 @@ export async function saveHumanAnalysis(
 
   await repo.saveEditedAnalysis(jobId, document)
   if (document.rightsAndConsentFlags.length > 0 && !hasOpenGate(job.approvals, "rights")) {
+    const detail = document.rightsAndConsentFlags.join(" ")
     await repo.openGate({
       jobId,
       kind: "rights",
       summary: "Rights concern needs a person",
-      detail: document.rightsAndConsentFlags.join(" "),
+      detail,
     })
+    await recordAudit(jobId, "escalation", "Rights concern needs a person", detail)
   }
   await repo.updateJob(jobId, {
     status: document.decision === "reject" ? "rejected" : "needs_review",
   })
+  if (intent === "approve") {
+    await recordAudit(jobId, "approval", "A person approved the analysis for planning", "Workflow and budget still need approval.")
+  } else if (intent === "reject" || document.decision === "reject") {
+    await recordAudit(jobId, "escalation", "Refused the job", "A person rejected this analysis. No proposal was sent.")
+  }
 }
 
 export async function planJob(repo: JobRepository, jobId: string): Promise<void> {
@@ -225,6 +276,7 @@ export async function planJob(repo: JobRepository, jobId: string): Promise<void>
     detail: `Estimated generation spend is ${(total / 100).toFixed(2)} USD before contingency. Generation cannot start until this gate is approved.`,
   })
   await repo.updateJob(jobId, { status: "needs_review", maxBudgetCents: null })
+  await recordAudit(jobId, "model_decision", "Route selected", routeDecisionDetail(steps))
 }
 
 export async function saveRouteOverrides(
@@ -252,33 +304,8 @@ export async function saveRouteOverrides(
   })
   const ordered = restage(overridden)
   const outputs = job.analysis?.effective.deliverables.map((item) => item.name).slice(0, 4) ?? []
-  await repo.replaceSteps(
-    jobId,
-    ordered.map((line) => ({
-      position: line.position,
-      name: line.name,
-      selectedModel: line.modelId,
-      modelKind: line.capability,
-      purpose: line.why,
-      inputs: [
-        "Approved brief",
-        `Route ${line.stage}`,
-        `Role ${line.role}`,
-        `Alternative ${line.alternativeLabel}`,
-      ],
-      expectedOutputs: outputs.length > 0 ? outputs : [line.name],
-      estimatedAttempts: line.attempts,
-      unitCostCents: line.unitCostCents,
-      estimatedTotalCents: line.lineCents,
-      routeStage: line.stage,
-      routeRole: line.role,
-      whyFit: line.why,
-      failureMode: line.failureMode,
-      alternativeModel: line.alternativeModelId,
-      docsUrl: line.docsUrl,
-      substituteNote: line.substituteNote,
-    })),
-  )
+  const stored = plannedStepsFromRouteLines(ordered, outputs)
+  await repo.replaceSteps(jobId, stored)
   const total = maxSpendCents(ordered)
   await repo.openGate({
     jobId,
@@ -287,6 +314,8 @@ export async function saveRouteOverrides(
     detail: `Estimated generation spend is ${(total / 100).toFixed(2)} USD before contingency. Generation cannot start until this gate is approved.`,
   })
   await repo.updateJob(jobId, { status: "needs_review", maxBudgetCents: null })
+  await recordAudit(jobId, "model_decision", "Route changed", routeDecisionDetail(stored))
+  await recordAudit(jobId, "cost_change", "Route spend changed", `estimatedGenerationCents ${total}`)
 }
 
 export async function updatePackagePrice(
@@ -301,6 +330,12 @@ export async function updatePackagePrice(
     throw new StudioError("Enter a package price above zero.")
   }
   await repo.updateJob(jobId, { budgetCents })
+  await recordAudit(
+    jobId,
+    "cost_change",
+    "Package price changed",
+    `clientPriceCents ${job.budgetCents} -> ${budgetCents}`,
+  )
 }
 
 export async function updateCommercials(
@@ -319,6 +354,12 @@ export async function updateCommercials(
     channelFeeBps: input.channelFeeBps,
     contingencyBps: input.contingencyBps,
   })
+  await recordAudit(
+    jobId,
+    "cost_change",
+    "Commercial terms changed",
+    `channelFeeBps ${job.channelFeeBps} -> ${input.channelFeeBps}; contingencyBps ${job.contingencyBps} -> ${input.contingencyBps}`,
+  )
 }
 
 export async function approveWorkflowAndBudget(
@@ -354,6 +395,18 @@ export async function approveWorkflowAndBudget(
   )
   await repo.updateAllSteps(jobId, { approvalStatus: "approved", status: "ready" })
   await repo.updateJob(jobId, { status: "approved", maxBudgetCents })
+  await recordAudit(
+    jobId,
+    "approval",
+    "A person approved the scope and the production maximum",
+    "This approval is inside the desk. It does not accept a marketplace contract.",
+  )
+  await recordAudit(
+    jobId,
+    "cost_change",
+    "Production maximum set from the approved route",
+    `maxBudgetCents ${maxBudgetCents}; estimatedGenerationCents ${estimate}`,
+  )
 }
 
 export async function clearRights(repo: JobRepository, jobId: string): Promise<void> {
@@ -367,6 +420,12 @@ export async function clearRights(repo: JobRepository, jobId: string): Promise<v
     "rights",
     "approved",
     "A person cleared the rights concern for production inside this desk. This does not grant a marketplace license.",
+  )
+  await recordAudit(
+    jobId,
+    "approval",
+    "A person cleared the rights concern",
+    "This does not grant a marketplace license.",
   )
 }
 
@@ -389,18 +448,10 @@ export async function runGeneration(repo: JobRepository, jobId: string): Promise
   if (job.maxBudgetCents == null) {
     throw new StudioError("Set a maximum production budget before generating.")
   }
-  if (process.env.STUDIO_OPERATOR_MODE === "live" && !readHiggsfieldCredentials()) {
-    throw new StudioError("Higgsfield credentials are not configured on the server. No request was sent.")
-  }
 
-  const pending = job.steps.filter((step) => {
-    if (step.approvalStatus !== "approved") return false
-    if (isConditionalRepair(step.purpose)) return false
-    return !job.generations.some(
-      (generation) => generation.stepId === step.id && generation.status === "succeeded",
-    )
-  })
+  const pending = stepsAwaitingOutput(job)
   if (pending.length === 0) throw new StudioError("Every approved step already has an output.")
+  assertLiveStepsSubmittable(pending)
 
   const freshCost = pending.reduce((sum, step) => {
     const open = job.generations.find(
@@ -412,80 +463,29 @@ export async function runGeneration(repo: JobRepository, jobId: string): Promise
   }, 0)
   const committed = spentGenerationCents(job.generations)
   if (committed + freshCost > job.maxBudgetCents) {
+    const detail = `Committed ${(committed / 100).toFixed(2)} USD plus ${(freshCost / 100).toFixed(2)} USD exceeds the ${(job.maxBudgetCents / 100).toFixed(2)} USD cap.`
     await repo.openGate({
       jobId,
       kind: "budget_increase",
       summary: "Generation would exceed the approved maximum",
-      detail: `Committed ${(committed / 100).toFixed(2)} USD plus ${(freshCost / 100).toFixed(2)} USD exceeds the ${(job.maxBudgetCents / 100).toFixed(2)} USD cap.`,
+      detail,
     })
+    await recordAudit(jobId, "escalation", "Generation would exceed the approved maximum", detail)
     throw new StudioError(
       "That run exceeds the approved production budget. Approve a higher maximum, or change the plan.",
     )
   }
 
   await repo.updateJob(jobId, { status: "generating" })
-
-  if (process.env.STUDIO_OPERATOR_MODE === "live") {
-    await runLiveSteps(repo, job)
-  } else {
-    await runMockSteps(repo, job, pending)
-  }
-
+  await runProviderSteps(repo, job, pending)
   await finishIfReady(repo, jobId)
-}
-
-async function runMockSteps(
-  repo: JobRepository,
-  job: JobDetail,
-  pending: JobDetail["steps"],
-): Promise<void> {
-  for (const step of pending) {
-    const running = job.generations.find(
-      (generation) =>
-        generation.stepId === step.id &&
-        (generation.status === "running" || generation.status === "queued"),
-    )
-    await repo.updateStep(step.id, { status: "running" })
-    const result = await requestHiggsfieldGeneration({
-      model: step.selectedModel,
-      title: job.title,
-      subtitle: step.name,
-      kind: step.modelKind,
-      costEstimateCents: running?.costEstimateCents ?? step.estimatedTotalCents,
-    })
-    const settingsJson = JSON.stringify({
-      mode: "mock",
-      model: step.selectedModel,
-      kind: step.modelKind,
-      purpose: step.purpose,
-    })
-    if (running) {
-      await repo.completeGeneration(running.id, {
-        status: "succeeded",
-        actualCostCents: result.actualCostCents,
-        outputUrl: result.outputUrl,
-        error: null,
-        completedAt: new Date(),
-      })
-      await repo.updateGeneration(running.id, { settingsJson, costSource: "mock", providerStatus: null })
-    } else {
-      await repo.createGeneration({
-        jobId: job.id,
-        stepId: step.id,
-        providerRequestId: result.providerRequestId,
-        model: step.selectedModel,
-        status: "succeeded",
-        costEstimateCents: step.estimatedTotalCents,
-        actualCostCents: result.actualCostCents,
-        outputUrl: result.outputUrl,
-        error: null,
-        settingsJson,
-        costSource: "mock",
-        completedAt: new Date(),
-      })
-    }
-    await repo.updateStep(step.id, { status: "complete" })
-  }
+  const generated = await mustGet(repo, jobId)
+  await recordAudit(
+    jobId,
+    "generation",
+    "Generated the approved steps",
+    generated.generations.map((item) => `${item.model} ${item.status}`).join("\n"),
+  )
 }
 
 export async function cancelJobGeneration(
@@ -586,58 +586,34 @@ export async function decideRevision(
   }
   if (approval === "rejected") {
     await repo.updateRevision(revisionId, "rejected")
+    await recordAudit(jobId, "escalation", "Refused the revision", revision.clientNote)
     return
   }
   if (job.maxBudgetCents == null) throw new StudioError("This job has no approved budget.")
   const spent = spentGenerationCents(job.generations)
   if (spent + revision.expectedIncrementalCents > job.maxBudgetCents) {
+    const detail = `Spent ${(spent / 100).toFixed(2)} USD plus ${(revision.expectedIncrementalCents / 100).toFixed(2)} USD exceeds the ${(job.maxBudgetCents / 100).toFixed(2)} USD cap.`
     await repo.openGate({
       jobId,
       kind: "budget_increase",
       summary: "Revision exceeds the approved maximum",
-      detail: `Spent ${(spent / 100).toFixed(2)} USD plus ${(revision.expectedIncrementalCents / 100).toFixed(2)} USD exceeds the ${(job.maxBudgetCents / 100).toFixed(2)} USD cap.`,
+      detail,
     })
+    await recordAudit(jobId, "escalation", "Revision exceeds the approved maximum", detail)
     throw new StudioError(
       "Approving this revision would exceed the production budget. Raise the maximum first.",
     )
   }
 
-  const live = process.env.STUDIO_OPERATOR_MODE === "live"
-  const result = live
-    ? localPreviewGeneration({
-        model: MODEL_CATALOG.finishing.id,
-        title: job.title,
-        subtitle: revision.affectedDeliverable,
-        kind: "finishing",
-        costEstimateCents: revision.expectedIncrementalCents,
-      })
-    : await requestHiggsfieldGeneration({
-        model: MODEL_CATALOG.finishing.id,
-        title: job.title,
-        subtitle: revision.affectedDeliverable,
-        kind: "finishing",
-        costEstimateCents: revision.expectedIncrementalCents,
-      })
-  await repo.updateRevision(revisionId, "approved")
-  await repo.createGeneration({
+  await recordFinishingRevision(repo, job, revision)
+  await recordAudit(jobId, "approval", "A person approved the revision", revision.affectedDeliverable)
+  await recordAudit(
     jobId,
-    stepId: null,
-    providerRequestId: result.providerRequestId,
-    model: MODEL_CATALOG.finishing.id,
-    status: "succeeded",
-    costEstimateCents: revision.expectedIncrementalCents,
-    actualCostCents: result.actualCostCents,
-    outputUrl: result.outputUrl,
-    error: null,
-    costSource: live ? "local_preview" : "mock",
-    settingsJson: JSON.stringify({
-      mode: live ? "local_preview" : "mock",
-      model: MODEL_CATALOG.finishing.id,
-      kind: "finishing",
-      note: "Finishing has no verified Higgsfield endpoint.",
-    }),
-    completedAt: new Date(),
-  })
+    "cost_change",
+    "Revision cost applied",
+    `incrementalCents ${revision.expectedIncrementalCents}`,
+  )
+  await recordAudit(jobId, "generation", "Finishing revision recorded", `${revision.affectedDeliverable} ${revision.expectedIncrementalCents}`)
 }
 
 export async function requestWorkflowChange(
@@ -660,6 +636,7 @@ export async function requestWorkflowChange(
   })
   await repo.updateAllSteps(jobId, { approvalStatus: "changes_requested", status: "blocked" })
   await repo.updateJob(jobId, { status: "needs_review" })
+  await recordAudit(jobId, "escalation", "Material workflow change needs a person", note)
 }
 
 export async function approveWorkflowChange(repo: JobRepository, jobId: string): Promise<void> {
@@ -673,6 +650,12 @@ export async function approveWorkflowChange(repo: JobRepository, jobId: string):
     "workflow_change",
     "approved",
     "A person approved replacing the plan. Rebuild the plan, then approve the new budget before generating.",
+  )
+  await recordAudit(
+    jobId,
+    "approval",
+    "A person approved replacing the plan",
+    "Rebuild the plan, then approve the new budget before generating.",
   )
 }
 
@@ -696,6 +679,8 @@ export async function approveBudgetIncrease(
     "approved",
     `Maximum production budget raised to ${(maxBudgetCents / 100).toFixed(2)} USD.`,
   )
+  await recordAudit(jobId, "approval", "A person approved a higher production maximum", `maxBudgetCents ${maxBudgetCents}`)
+  await recordAudit(jobId, "cost_change", "Production maximum raised", `maxBudgetCents ${job.maxBudgetCents ?? "none"} -> ${maxBudgetCents}`)
 }
 
 export async function approveDelivery(repo: JobRepository, jobId: string): Promise<void> {
@@ -728,6 +713,12 @@ export async function approveDelivery(repo: JobRepository, jobId: string): Promi
     "Delivered inside Studio Operator. No marketplace upload was performed.",
   )
   await repo.updateJob(jobId, { status: "delivered" })
+  await recordAudit(
+    jobId,
+    "approval",
+    "A person approved final delivery",
+    "Delivered inside Studio Operator. No marketplace upload was performed.",
+  )
 }
 
 export async function rejectJob(repo: JobRepository, jobId: string): Promise<void> {
@@ -745,6 +736,7 @@ export async function rejectJob(repo: JobRepository, jobId: string): Promise<voi
     )
   }
   await repo.updateJob(jobId, { status: "rejected" })
+  await recordAudit(jobId, "escalation", "Refused the job", "A person rejected the job before delivery. No marketplace message was sent.")
 }
 
 export async function appendClientNote(
@@ -816,15 +808,29 @@ export async function runQa(repo: JobRepository, jobId: string): Promise<void> {
       withinLimits: true,
     }, true)
     if (after.verdict === "ready") await ensureDeliveryNote(repo, refreshed)
+    await recordAudit(
+      jobId,
+      "repair",
+      "Targeted repair",
+      `${before.repairModelLabel ?? "Repair"} (${before.repairModelId ?? "unselected"}) repair. incrementalCents ${before.incrementalCents}.`,
+    )
+    await recordAudit(
+      jobId,
+      "cost_change",
+      "Repair cost applied inside the automatic cap",
+      `incrementalCents ${before.incrementalCents}; newTotalCents ${spent}`,
+    )
     return
   }
   if (before.verdict === "controlled_edit" && !before.withinLimits) {
+    const detail = qaRepairDetail(before)
     await repo.openGate({
       jobId,
       kind: "qa_repair",
       summary: "QA repair needs a person",
-      detail: qaRepairDetail(before),
+      detail,
     })
+    await recordAudit(jobId, "escalation", "QA repair needs a person", detail)
   }
   await persistQa(repo, job, before, false)
   if (before.verdict === "ready") await ensureDeliveryNote(repo, job)
@@ -872,6 +878,24 @@ export async function approveQaRepair(
     withinLimits: true,
   }, true)
   if (after.verdict === "ready") await ensureDeliveryNote(repo, refreshed)
+  await recordAudit(
+    jobId,
+    "approval",
+    "A person approved the repair",
+    `maxBudgetCents ${maxBudgetCents}`,
+  )
+  await recordAudit(
+    jobId,
+    "repair",
+    "Targeted repair",
+    `${before.repairModelLabel ?? "Repair"} (${before.repairModelId ?? "unselected"}) repair. incrementalCents ${before.incrementalCents}.`,
+  )
+  await recordAudit(
+    jobId,
+    "cost_change",
+    "Repair cost applied",
+    `incrementalCents ${before.incrementalCents}; newTotalCents ${spent}; maxBudgetCents ${maxBudgetCents}`,
+  )
 }
 
 export async function continueRecording(repo: JobRepository, jobId: string): Promise<void> {
@@ -941,96 +965,6 @@ export async function resetDemoJob(repo: JobRepository, jobId: string, now = new
   })
 }
 
-function evaluateJobQa(job: JobDetail): QaEvaluation {
-  return evaluateQa({
-    brief: job.rawBrief,
-    deliverables: job.analysis?.effective.deliverables ?? [],
-    brandConstraints: job.analysis?.effective.brandConstraints ?? [],
-    steps: job.steps.map((step) => ({
-      id: step.id,
-      name: step.name,
-      purpose: step.purpose,
-      capability: step.modelKind,
-      selectedModel: step.selectedModel,
-      unitCostCents: step.unitCostCents,
-      estimatedAttempts: step.estimatedAttempts,
-      estimatedTotalCents: step.estimatedTotalCents,
-    })),
-    generations: job.generations.map((generation) => ({
-      stepId: generation.stepId,
-      status: generation.status,
-      model: generation.model,
-      actualCostCents: generation.actualCostCents,
-      costEstimateCents: generation.costEstimateCents,
-    })),
-    spentCents: spentGenerationCents(job.generations),
-    maxBudgetCents: job.maxBudgetCents,
-    clientPriceCents: job.budgetCents,
-    contingencyBps: job.contingencyBps,
-    channelFeeBps: job.channelFeeBps,
-  })
-}
-
-async function persistQa(
-  repo: JobRepository,
-  job: JobDetail,
-  evaluation: QaEvaluation,
-  autoRepaired: boolean,
-): Promise<void> {
-  await repo.saveQaReport({
-    jobId: job.id,
-    checklistJson: JSON.stringify(evaluation.checklist),
-    verdict: evaluation.verdict,
-    reason: evaluation.reason,
-    repairModelId: evaluation.repairModelId,
-    repairModelLabel: evaluation.repairModelLabel,
-    incrementalCents: evaluation.incrementalCents,
-    newTotalCents: evaluation.newTotalCents,
-    updatedMarginCents: evaluation.updatedMarginCents,
-    withinLimits: evaluation.withinLimits,
-    autoRepaired,
-  })
-}
-
-async function runApprovedRepair(
-  repo: JobRepository,
-  job: JobDetail,
-  evaluation: QaEvaluation,
-): Promise<void> {
-  assertAllowedOperation("generation.run_within_limits")
-  const step = job.steps.find((item) => isConditionalRepair(item.purpose))
-  if (!step || !evaluation.repairModelId) throw new StudioError("No approved continuity repair is on this plan.")
-  const live = process.env.STUDIO_OPERATOR_MODE === "live"
-  const result = localPreviewGeneration({
-    model: step.selectedModel,
-    title: job.title,
-    subtitle: step.name,
-    kind: step.modelKind,
-    costEstimateCents: evaluation.incrementalCents,
-  })
-  await repo.createGeneration({
-    jobId: job.id,
-    stepId: step.id,
-    providerRequestId: result.providerRequestId,
-    model: step.selectedModel,
-    status: "succeeded",
-    costEstimateCents: evaluation.incrementalCents,
-    actualCostCents: result.actualCostCents,
-    outputUrl: result.outputUrl,
-    error: null,
-    costSource: live ? "local_preview" : "mock",
-    settingsJson: JSON.stringify({
-      mode: live ? "local_preview" : "mock",
-      qaRepair: true,
-      model: step.selectedModel,
-      kind: step.modelKind,
-      note: "QA repair preview. Seedance 2.5 video edit is not a wired live endpoint. No Higgsfield request was sent.",
-    }),
-    completedAt: new Date(),
-  })
-  await repo.updateStep(step.id, { status: "complete" })
-}
-
 async function ensureDeliveryNote(repo: JobRepository, job: JobDetail): Promise<void> {
   assertAllowedOperation("delivery.record_internal")
   const names = job.analysis?.effective.deliverables.map((item) => item.name) ?? []
@@ -1043,20 +977,3 @@ async function ensureDeliveryNote(repo: JobRepository, job: JobDetail): Promise<
   })
 }
 
-function marginAfter(job: JobDetail, spentCents: number): number {
-  return computeProfitability({
-    clientPriceCents: job.budgetCents,
-    estimatedGenerationCents: spentCents,
-    contingencyBps: job.contingencyBps,
-    channelFeeBps: job.channelFeeBps,
-    actualGenerationCents: spentCents,
-    maxBudgetCents: job.maxBudgetCents,
-  }).expectedGrossMarginCents
-}
-
-function qaRepairDetail(evaluation: QaEvaluation): string {
-  const incremental = (evaluation.incrementalCents / 100).toFixed(2)
-  const total = (evaluation.newTotalCents / 100).toFixed(2)
-  const margin = (evaluation.updatedMarginCents / 100).toFixed(2)
-  return `${evaluation.reason} Model ${evaluation.repairModelLabel ?? "unselected"}. Incremental ${incremental} USD. New total ${total} USD. Updated margin ${margin} USD. ${evaluation.blockReason ?? ""}`.trim()
-}

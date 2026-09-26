@@ -17,7 +17,7 @@ import {
 import { StudioError } from "@/lib/errors"
 import { resolveAnalysisProvider } from "@/server/config"
 import { explicitDemoWorkflow } from "@/lib/demos"
-import { MODEL_CATALOG } from "@/server/services/models"
+import { planningCapabilityPrices } from "@/lib/planning-rates"
 
 export { resolveAnalysisProvider }
 
@@ -459,14 +459,29 @@ export function targetMarginBpsFromEnv(): number {
   return parsed
 }
 
+/** Layer 1 only. Analysis receives capability planning rates, never model ids or list prices. */
 export function catalogPrices(): CommercialContext["catalog"] {
-  return {
-    image: { unitCostCents: MODEL_CATALOG.image.unitCostCents },
-    video: { unitCostCents: MODEL_CATALOG.video.unitCostCents },
-    voice: { unitCostCents: MODEL_CATALOG.voice.unitCostCents },
-    editing: { unitCostCents: MODEL_CATALOG.editing.unitCostCents },
-    finishing: { unitCostCents: MODEL_CATALOG.finishing.unitCostCents },
-  }
+  return planningCapabilityPrices()
+}
+
+/** Analysis owner: re-price an edited draft from layer-1 rates. The model does not supply prices. */
+export function finalizeDeskAnalysis(
+  draft: AnalysisDraft,
+  input: {
+    clientPriceCents: number
+    channelFeeBps: number
+    contingencyBps: number
+    deadlineIso: string | null
+  },
+): StoredAnalysis {
+  return finalizeAnalysis(draft, {
+    clientPriceCents: input.clientPriceCents,
+    channelFeeBps: input.channelFeeBps,
+    contingencyBps: input.contingencyBps,
+    deadlineIso: input.deadlineIso,
+    targetMarginBps: targetMarginBpsFromEnv(),
+    catalog: catalogPrices(),
+  })
 }
 
 export function commercialContext(input: AnalysisInput, now?: Date): CommercialContext {
