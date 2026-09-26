@@ -138,6 +138,7 @@ async function main() {
   assert.match(studio, /plannedStepsFromRouteLines/)
   assert.match(studio, /finalizeDeskAnalysis/)
   assert.match(studio, /clearJobSupervision/)
+  assert.match(studio, /addAudit/)
   assert.doesNotMatch(studio, /requestHiggsfieldGeneration|localPreviewGeneration|assertLiveSubmittable/)
 
   const [planned] = plannedStepsFromRouteLines([line()], ["Master"])

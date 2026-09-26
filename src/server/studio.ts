@@ -16,6 +16,7 @@ import type { Decision, JobDetail } from "@/lib/types"
 import { estimatedGenerationCents, spentGenerationCents } from "@/lib/types"
 import { canRebuildPlan, hasOpenGate } from "@/lib/workflow-policy"
 import type { JobRepository } from "@/server/repositories/job-repository"
+import { addAudit, type AuditKind } from "@/server/services/audit"
 import { finalizeDeskAnalysis, produceAnalysis } from "@/server/services/analyze-brief"
 import { clearJobSupervision } from "@/server/services/autonomy"
 import { draftClientDeliveryNote } from "@/server/services/delivery-note"
@@ -41,6 +42,27 @@ import {
 import { recommendRevision } from "@/server/services/revisions"
 
 const DEFAULT_CONTINGENCY_BPS = 1500
+
+async function recordAudit(jobId: string, kind: AuditKind, summary: string, detail = ""): Promise<void> {
+  await addAudit({ jobId, kind, summary, detail })
+}
+
+function routeDecisionDetail(
+  steps: Array<{
+    name: string
+    selectedModel: string
+    estimatedAttempts: number
+    unitCostCents: number
+    estimatedTotalCents: number
+  }>,
+): string {
+  return steps
+    .map(
+      (step) =>
+        `${step.name}: ${step.selectedModel} ${step.estimatedAttempts} x ${step.unitCostCents} = ${step.estimatedTotalCents}`,
+    )
+    .join("\n")
+}
 
 async function mustGet(repo: JobRepository, id: string): Promise<JobDetail> {
   const job = await repo.getJob(id)
@@ -113,17 +135,22 @@ export async function analyzeJob(repo: JobRepository, jobId: string): Promise<vo
   await repo.saveAnalysis(jobId, analysis)
 
   if (analysis.document.rightsAndConsentFlags.length > 0) {
+    const detail = analysis.document.rightsAndConsentFlags.join(" ")
     await repo.openGate({
       jobId,
       kind: "rights",
       summary: "Rights concern needs a person",
-      detail: analysis.document.rightsAndConsentFlags.join(" "),
+      detail,
     })
+    await recordAudit(jobId, "escalation", "Rights concern needs a person", detail)
   }
 
   await repo.updateJob(jobId, {
     status: analysis.document.decision === "reject" ? "rejected" : "needs_review",
   })
+  if (analysis.document.decision === "reject") {
+    await recordAudit(jobId, "escalation", "Refused the job", "Analysis refused the job. No proposal was sent.")
+  }
 }
 
 export async function setHumanDecision(
@@ -148,6 +175,11 @@ export async function setHumanDecision(
   await repo.updateJob(jobId, {
     status: decision === "reject" ? "rejected" : "needs_review",
   })
+  if (decision === "reject") {
+    await recordAudit(jobId, "escalation", "Refused the job", note)
+  } else if (decision === "accept") {
+    await recordAudit(jobId, "approval", "A person accepted the job for planning", note)
+  }
 }
 
 export async function saveHumanAnalysis(
@@ -196,16 +228,23 @@ export async function saveHumanAnalysis(
 
   await repo.saveEditedAnalysis(jobId, document)
   if (document.rightsAndConsentFlags.length > 0 && !hasOpenGate(job.approvals, "rights")) {
+    const detail = document.rightsAndConsentFlags.join(" ")
     await repo.openGate({
       jobId,
       kind: "rights",
       summary: "Rights concern needs a person",
-      detail: document.rightsAndConsentFlags.join(" "),
+      detail,
     })
+    await recordAudit(jobId, "escalation", "Rights concern needs a person", detail)
   }
   await repo.updateJob(jobId, {
     status: document.decision === "reject" ? "rejected" : "needs_review",
   })
+  if (intent === "approve") {
+    await recordAudit(jobId, "approval", "A person approved the analysis for planning", "Workflow and budget still need approval.")
+  } else if (intent === "reject" || document.decision === "reject") {
+    await recordAudit(jobId, "escalation", "Refused the job", "A person rejected this analysis. No proposal was sent.")
+  }
 }
 
 export async function planJob(repo: JobRepository, jobId: string): Promise<void> {
@@ -237,6 +276,7 @@ export async function planJob(repo: JobRepository, jobId: string): Promise<void>
     detail: `Estimated generation spend is ${(total / 100).toFixed(2)} USD before contingency. Generation cannot start until this gate is approved.`,
   })
   await repo.updateJob(jobId, { status: "needs_review", maxBudgetCents: null })
+  await recordAudit(jobId, "model_decision", "Route selected", routeDecisionDetail(steps))
 }
 
 export async function saveRouteOverrides(
@@ -264,7 +304,8 @@ export async function saveRouteOverrides(
   })
   const ordered = restage(overridden)
   const outputs = job.analysis?.effective.deliverables.map((item) => item.name).slice(0, 4) ?? []
-  await repo.replaceSteps(jobId, plannedStepsFromRouteLines(ordered, outputs))
+  const stored = plannedStepsFromRouteLines(ordered, outputs)
+  await repo.replaceSteps(jobId, stored)
   const total = maxSpendCents(ordered)
   await repo.openGate({
     jobId,
@@ -273,6 +314,8 @@ export async function saveRouteOverrides(
     detail: `Estimated generation spend is ${(total / 100).toFixed(2)} USD before contingency. Generation cannot start until this gate is approved.`,
   })
   await repo.updateJob(jobId, { status: "needs_review", maxBudgetCents: null })
+  await recordAudit(jobId, "model_decision", "Route changed", routeDecisionDetail(stored))
+  await recordAudit(jobId, "cost_change", "Route spend changed", `estimatedGenerationCents ${total}`)
 }
 
 export async function updatePackagePrice(
@@ -287,6 +330,12 @@ export async function updatePackagePrice(
     throw new StudioError("Enter a package price above zero.")
   }
   await repo.updateJob(jobId, { budgetCents })
+  await recordAudit(
+    jobId,
+    "cost_change",
+    "Package price changed",
+    `clientPriceCents ${job.budgetCents} -> ${budgetCents}`,
+  )
 }
 
 export async function updateCommercials(
@@ -305,6 +354,12 @@ export async function updateCommercials(
     channelFeeBps: input.channelFeeBps,
     contingencyBps: input.contingencyBps,
   })
+  await recordAudit(
+    jobId,
+    "cost_change",
+    "Commercial terms changed",
+    `channelFeeBps ${job.channelFeeBps} -> ${input.channelFeeBps}; contingencyBps ${job.contingencyBps} -> ${input.contingencyBps}`,
+  )
 }
 
 export async function approveWorkflowAndBudget(
@@ -340,6 +395,18 @@ export async function approveWorkflowAndBudget(
   )
   await repo.updateAllSteps(jobId, { approvalStatus: "approved", status: "ready" })
   await repo.updateJob(jobId, { status: "approved", maxBudgetCents })
+  await recordAudit(
+    jobId,
+    "approval",
+    "A person approved the scope and the production maximum",
+    "This approval is inside the desk. It does not accept a marketplace contract.",
+  )
+  await recordAudit(
+    jobId,
+    "cost_change",
+    "Production maximum set from the approved route",
+    `maxBudgetCents ${maxBudgetCents}; estimatedGenerationCents ${estimate}`,
+  )
 }
 
 export async function clearRights(repo: JobRepository, jobId: string): Promise<void> {
@@ -353,6 +420,12 @@ export async function clearRights(repo: JobRepository, jobId: string): Promise<v
     "rights",
     "approved",
     "A person cleared the rights concern for production inside this desk. This does not grant a marketplace license.",
+  )
+  await recordAudit(
+    jobId,
+    "approval",
+    "A person cleared the rights concern",
+    "This does not grant a marketplace license.",
   )
 }
 
@@ -390,12 +463,14 @@ export async function runGeneration(repo: JobRepository, jobId: string): Promise
   }, 0)
   const committed = spentGenerationCents(job.generations)
   if (committed + freshCost > job.maxBudgetCents) {
+    const detail = `Committed ${(committed / 100).toFixed(2)} USD plus ${(freshCost / 100).toFixed(2)} USD exceeds the ${(job.maxBudgetCents / 100).toFixed(2)} USD cap.`
     await repo.openGate({
       jobId,
       kind: "budget_increase",
       summary: "Generation would exceed the approved maximum",
-      detail: `Committed ${(committed / 100).toFixed(2)} USD plus ${(freshCost / 100).toFixed(2)} USD exceeds the ${(job.maxBudgetCents / 100).toFixed(2)} USD cap.`,
+      detail,
     })
+    await recordAudit(jobId, "escalation", "Generation would exceed the approved maximum", detail)
     throw new StudioError(
       "That run exceeds the approved production budget. Approve a higher maximum, or change the plan.",
     )
@@ -404,6 +479,13 @@ export async function runGeneration(repo: JobRepository, jobId: string): Promise
   await repo.updateJob(jobId, { status: "generating" })
   await runProviderSteps(repo, job, pending)
   await finishIfReady(repo, jobId)
+  const generated = await mustGet(repo, jobId)
+  await recordAudit(
+    jobId,
+    "generation",
+    "Generated the approved steps",
+    generated.generations.map((item) => `${item.model} ${item.status}`).join("\n"),
+  )
 }
 
 export async function cancelJobGeneration(
@@ -504,23 +586,34 @@ export async function decideRevision(
   }
   if (approval === "rejected") {
     await repo.updateRevision(revisionId, "rejected")
+    await recordAudit(jobId, "escalation", "Refused the revision", revision.clientNote)
     return
   }
   if (job.maxBudgetCents == null) throw new StudioError("This job has no approved budget.")
   const spent = spentGenerationCents(job.generations)
   if (spent + revision.expectedIncrementalCents > job.maxBudgetCents) {
+    const detail = `Spent ${(spent / 100).toFixed(2)} USD plus ${(revision.expectedIncrementalCents / 100).toFixed(2)} USD exceeds the ${(job.maxBudgetCents / 100).toFixed(2)} USD cap.`
     await repo.openGate({
       jobId,
       kind: "budget_increase",
       summary: "Revision exceeds the approved maximum",
-      detail: `Spent ${(spent / 100).toFixed(2)} USD plus ${(revision.expectedIncrementalCents / 100).toFixed(2)} USD exceeds the ${(job.maxBudgetCents / 100).toFixed(2)} USD cap.`,
+      detail,
     })
+    await recordAudit(jobId, "escalation", "Revision exceeds the approved maximum", detail)
     throw new StudioError(
       "Approving this revision would exceed the production budget. Raise the maximum first.",
     )
   }
 
   await recordFinishingRevision(repo, job, revision)
+  await recordAudit(jobId, "approval", "A person approved the revision", revision.affectedDeliverable)
+  await recordAudit(
+    jobId,
+    "cost_change",
+    "Revision cost applied",
+    `incrementalCents ${revision.expectedIncrementalCents}`,
+  )
+  await recordAudit(jobId, "generation", "Finishing revision recorded", `${revision.affectedDeliverable} ${revision.expectedIncrementalCents}`)
 }
 
 export async function requestWorkflowChange(
@@ -543,6 +636,7 @@ export async function requestWorkflowChange(
   })
   await repo.updateAllSteps(jobId, { approvalStatus: "changes_requested", status: "blocked" })
   await repo.updateJob(jobId, { status: "needs_review" })
+  await recordAudit(jobId, "escalation", "Material workflow change needs a person", note)
 }
 
 export async function approveWorkflowChange(repo: JobRepository, jobId: string): Promise<void> {
@@ -556,6 +650,12 @@ export async function approveWorkflowChange(repo: JobRepository, jobId: string):
     "workflow_change",
     "approved",
     "A person approved replacing the plan. Rebuild the plan, then approve the new budget before generating.",
+  )
+  await recordAudit(
+    jobId,
+    "approval",
+    "A person approved replacing the plan",
+    "Rebuild the plan, then approve the new budget before generating.",
   )
 }
 
@@ -579,6 +679,8 @@ export async function approveBudgetIncrease(
     "approved",
     `Maximum production budget raised to ${(maxBudgetCents / 100).toFixed(2)} USD.`,
   )
+  await recordAudit(jobId, "approval", "A person approved a higher production maximum", `maxBudgetCents ${maxBudgetCents}`)
+  await recordAudit(jobId, "cost_change", "Production maximum raised", `maxBudgetCents ${job.maxBudgetCents ?? "none"} -> ${maxBudgetCents}`)
 }
 
 export async function approveDelivery(repo: JobRepository, jobId: string): Promise<void> {
@@ -611,6 +713,12 @@ export async function approveDelivery(repo: JobRepository, jobId: string): Promi
     "Delivered inside Studio Operator. No marketplace upload was performed.",
   )
   await repo.updateJob(jobId, { status: "delivered" })
+  await recordAudit(
+    jobId,
+    "approval",
+    "A person approved final delivery",
+    "Delivered inside Studio Operator. No marketplace upload was performed.",
+  )
 }
 
 export async function rejectJob(repo: JobRepository, jobId: string): Promise<void> {
@@ -628,6 +736,7 @@ export async function rejectJob(repo: JobRepository, jobId: string): Promise<voi
     )
   }
   await repo.updateJob(jobId, { status: "rejected" })
+  await recordAudit(jobId, "escalation", "Refused the job", "A person rejected the job before delivery. No marketplace message was sent.")
 }
 
 export async function appendClientNote(
@@ -699,15 +808,29 @@ export async function runQa(repo: JobRepository, jobId: string): Promise<void> {
       withinLimits: true,
     }, true)
     if (after.verdict === "ready") await ensureDeliveryNote(repo, refreshed)
+    await recordAudit(
+      jobId,
+      "repair",
+      "Targeted repair",
+      `${before.repairModelLabel ?? "Repair"} (${before.repairModelId ?? "unselected"}) repair. incrementalCents ${before.incrementalCents}.`,
+    )
+    await recordAudit(
+      jobId,
+      "cost_change",
+      "Repair cost applied inside the automatic cap",
+      `incrementalCents ${before.incrementalCents}; newTotalCents ${spent}`,
+    )
     return
   }
   if (before.verdict === "controlled_edit" && !before.withinLimits) {
+    const detail = qaRepairDetail(before)
     await repo.openGate({
       jobId,
       kind: "qa_repair",
       summary: "QA repair needs a person",
-      detail: qaRepairDetail(before),
+      detail,
     })
+    await recordAudit(jobId, "escalation", "QA repair needs a person", detail)
   }
   await persistQa(repo, job, before, false)
   if (before.verdict === "ready") await ensureDeliveryNote(repo, job)
@@ -755,6 +878,24 @@ export async function approveQaRepair(
     withinLimits: true,
   }, true)
   if (after.verdict === "ready") await ensureDeliveryNote(repo, refreshed)
+  await recordAudit(
+    jobId,
+    "approval",
+    "A person approved the repair",
+    `maxBudgetCents ${maxBudgetCents}`,
+  )
+  await recordAudit(
+    jobId,
+    "repair",
+    "Targeted repair",
+    `${before.repairModelLabel ?? "Repair"} (${before.repairModelId ?? "unselected"}) repair. incrementalCents ${before.incrementalCents}.`,
+  )
+  await recordAudit(
+    jobId,
+    "cost_change",
+    "Repair cost applied",
+    `incrementalCents ${before.incrementalCents}; newTotalCents ${spent}; maxBudgetCents ${maxBudgetCents}`,
+  )
 }
 
 export async function continueRecording(repo: JobRepository, jobId: string): Promise<void> {

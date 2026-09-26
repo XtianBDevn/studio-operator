@@ -12,7 +12,7 @@
 - Provider — `src/server/services/provider-run.ts` (mock previews and live Higgsfield steps)
 - QA — `src/lib/qa.ts`, `src/server/services/qa-desk.ts`
 - Autonomy — `src/lib/autonomy-policy.ts`, `src/server/supervise.ts`, `src/server/services/autonomy.ts`
-- Audit — `src/server/services/audit.ts` (read, write, and delete of `AuditEvent`; more event kinds wait for stage 04)
+- Audit — `src/server/services/audit.ts` (read, write, and delete of `AuditEvent`; stage 04 records desk decisions on that table)
 
 Behavior of the desk loop is unchanged. Live submit is still only the two workflows. Mock stays the default.
 

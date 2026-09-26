@@ -45,6 +45,8 @@ Analysis uses GPT-6 Astra through the OpenAI Responses API when `OPENAI_API_KEY`
 npm run test:analysis
 npm run test:router
 npm run test:catalog
+npm run test:modules
+npm run test:fixtures
 npm run test:qa
 npm run test:autonomy
 npm run test:higgsfield
@@ -67,7 +69,7 @@ npm run smoke
 
 Future cloud agents rebuild one stage at a time from [`docs/agent-prompts/`](docs/agent-prompts/README.md). Read [`00-product-lock.md`](docs/agent-prompts/00-product-lock.md) first. Finish the assigned stage, run its checks, and wait for verify before the next file. Do not pile the remaining stages into one diff.
 
-Stage 01 (catalog truth table) and stage 03 (module boundaries) are done. Stage 02 is this pack. Stages 04 and 05 are prompts only until a person assigns them.
+Stages 01 (catalog truth table), 03 (module boundaries), and 04 (fixtures and audit) are done. Stage 02 is this pack. Stage 05 is a prompt only until a person assigns it.
 
 ## What you can do
 

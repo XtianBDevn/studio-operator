@@ -23,7 +23,7 @@ Do not start stage N+1 in the same pass as stage N.
 | [01-catalog-truth-table.md](./01-catalog-truth-table.md) | Done | Shipped on PR #4. Do not redo it. |
 | [02-prompt-pack.md](./02-prompt-pack.md) | This pack | The files in this directory. |
 | [03-module-boundaries.md](./03-module-boundaries.md) | Done | Shipped on PR #4. State machine calls module owners. |
-| [04-fixtures-and-audit.md](./04-fixtures-and-audit.md) | Not started | Prompt only. Fixtures first, queryable audit. |
+| [04-fixtures-and-audit.md](./04-fixtures-and-audit.md) | Done | Shipped on PR #4. Demo fixtures and queryable audit. |
 | [05-live-smoke-checklist.md](./05-live-smoke-checklist.md) | Not started | Prompt only. What to record when keys exist. No live calls while writing the checklist. |
 
 ## Verify before next

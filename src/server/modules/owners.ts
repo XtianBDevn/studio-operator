@@ -8,7 +8,7 @@
  * - Provider — `src/server/services/provider-run.ts`, `providers.ts`, `higgsfield/`, `live-generation.ts`
  * - QA — `src/lib/qa.ts`, `src/server/services/qa-desk.ts`
  * - Autonomy — `src/lib/autonomy-policy.ts`, `src/server/supervise.ts`, `src/server/services/autonomy.ts`
- * - Audit — `src/server/services/audit.ts` (AuditEvent rows; stage 04 may add more kinds)
+ * - Audit — `src/server/services/audit.ts` (AuditEvent rows for model decisions, drafts, approvals, generations, repairs, cost changes, and escalations)
  */
 
 export { finalizeDeskAnalysis, produceAnalysis, catalogPrices } from "@/server/services/analyze-brief"

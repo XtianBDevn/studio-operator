@@ -67,7 +67,8 @@ async function main() {
   const follow = (await listMessages(GLASS_MONUMENT.id)).find((message) => message.kind === "follow_up")
   assert.equal(follow?.disposition, "draft")
   assert.match(follow?.body ?? "", /testimonial/)
-  const kinds = new Set((await listAudit(GLASS_MONUMENT.id)).map((event) => event.kind))
+  const glassAudit = await listAudit(GLASS_MONUMENT.id)
+  const kinds = new Set(glassAudit.map((event) => event.kind))
   for (const kind of [
     "model_decision",
     "message_draft",
@@ -80,6 +81,20 @@ async function main() {
   ]) {
     assert.equal(kinds.has(kind), true, kind)
   }
+  assert.ok(glassAudit.some((event) => event.kind === "message_draft"))
+  assert.ok(glassAudit.some((event) => event.kind === "approval"))
+  assert.ok(
+    glassAudit.some(
+      (event) => event.kind === "escalation" && /refus/i.test(`${event.summary}\n${event.detail}`),
+    ),
+  )
+  const glassDetail = glassAudit.map((event) => event.detail).join("\n")
+  assert.match(glassDetail, /z-image\/turbo/)
+  assert.match(glassDetail, /kling-video\/v3\.0\/pro\/text-to-video/)
+  assert.equal(
+    glassAudit.some((event) => event.kind === "message_sent" && /marketplace/i.test(event.summary)),
+    false,
+  )
 
   const orchardBefore = await jobs.getJob(NIGHT_ORCHARD.id)
   assert.equal(orchardBefore?.generations.length, 0)
@@ -88,8 +103,13 @@ async function main() {
   assert.equal(orchardMid?.generations.length, 0)
   assert.notEqual(orchardMid?.status, "delivered")
   const orchardAudit = await listAudit(NIGHT_ORCHARD.id)
-  assert.match(orchardAudit.map((event) => event.detail).join("\n"), /orbit|atmosphere|low light|camera/i)
+  const orchardDetail = orchardAudit.map((event) => event.detail).join("\n")
+  assert.match(orchardDetail, /orbit|atmosphere|low light|camera/i)
+  assert.match(orchardDetail, /xai\/grok-imagine-image-2\.0/)
+  assert.match(orchardDetail, /higgsfield\/cinema-studio\/4\.0/)
   assert.match(orchardAudit.map((event) => event.summary).join("\n"), /crosses the automatic spend/)
+  assert.ok(orchardAudit.some((event) => event.kind === "model_decision"))
+  assert.ok(orchardAudit.some((event) => event.kind === "escalation"))
   await walk(NIGHT_ORCHARD.id, ["delivery_blocked", "done"])
   const orchardDone = await jobs.getJob(NIGHT_ORCHARD.id)
   assert.notEqual(orchardDone?.status, "delivered")

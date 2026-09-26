@@ -1,30 +1,29 @@
 # 04 — Fixtures and audit
 
-**Status: not started.** Prompt only. Do not implement this until stage 03 is verified.
+**Status: done.** Shipped on [PR #4](https://github.com/XtianBDevn/studio-operator/pull/4). Do not redo this stage. Do not start stage 05 from this file.
 
-## Outcome
+## Already done
 
-Seeded briefs, expected routes, expected margins, and autonomy refusals are tests first. Model decisions, drafts, approvals, generations, repairs, cost changes, and escalations are queryable audit events, not lines buried in logs.
+Glass Monument and Night Orchard are fixture tests in `scripts/fixtures.test.ts` (`npm run test:fixtures`). Each test checks the route model, role, and stage, and checks that margin is `computeProfitability` on `PLANNING_RATES` times the fixture attempt counts. Route copy is not asserted.
 
-Glass Monument and Night Orchard stay the two contrasting fixtures for `/record` and supervised walks.
+Desk decisions are rows on the existing `AuditEvent` model (`src/server/services/audit.ts`). `src/server/studio.ts` writes them after a successful transition. The supervised runner writes the same kinds. There is no second log.
 
-## Constraints
+Queryable kinds:
 
-- Obey [00-product-lock.md](./00-product-lock.md).
-- Fixtures assert outcomes (route model, margin band, refusal). Do not assert prose that will churn every copy edit.
-- `AuditEvent` already exists (`prisma/schema.prisma`, autonomy repository). Extend that record so a person can query what the desk decided. Do not add a second log system.
-- Marketplace actions stay refused and audited. A draft is not a send.
-- Consent tests still match person and use. A Harbor-style consent does not cover a new person or a new use.
-- Do not add live models. Do not call Higgsfield or OpenAI. Mock stays the default.
-- Do not implement stage 05 in this pass.
+- `model_decision` — route stored by the desk
+- `message_draft` and `message_sent` — client messages from the supervised runner (a draft is not a send)
+- `approval` — a person cleared a gate
+- `generation` — approved steps or a finishing revision
+- `repair` — a priced continuity repair
+- `cost_change` — package price, commercials, production maximum, route spend, or repair spend
+- `escalation` — a refusal or a stop that needs a person, including marketplace refusals
 
-## Success criteria
+`scripts/autonomy-walk.ts` queries a draft, an approval, and a refusal. Marketplace send stays refused. Consent still has to match person and use.
 
-- A test seeds or loads Glass Monument and Night Orchard and checks the expected route and that planning rates, not invented prices, produce the margin.
-- Autonomy tests still refuse marketplace send, and at least one new or existing test shows a queryable audit row for a draft, an approval, and a refusal.
-- `npm run test:autonomy`, `test:router`, `test:qa`, `test:catalog`, and `npm run smoke` pass.
-- The PR names which events are queryable and which gaps remain.
+## If you are here
+
+Confirm `npm run test:fixtures` and `npm run test:autonomy` pass. Then stop.
 
 ## Stop
 
-Stop after fixtures and audit. Do not run a live smoke. Wait for verify.
+This stage is finished. Do not run a live smoke. Do not start stage 05. Wait for verify.
