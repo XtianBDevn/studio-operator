@@ -22,7 +22,7 @@ Do not start stage N+1 in the same pass as stage N.
 | [00-product-lock.md](./00-product-lock.md) | Lock | Paste-only, economics, mock-first, two live workflows, marketplace refuse, human gates. |
 | [01-catalog-truth-table.md](./01-catalog-truth-table.md) | Done | Shipped on PR #4. Do not redo it. |
 | [02-prompt-pack.md](./02-prompt-pack.md) | This pack | The files in this directory. |
-| [03-module-boundaries.md](./03-module-boundaries.md) | Not started | Prompt only. Thin core and adapters. |
+| [03-module-boundaries.md](./03-module-boundaries.md) | Done | Shipped on PR #4. State machine calls module owners. |
 | [04-fixtures-and-audit.md](./04-fixtures-and-audit.md) | Not started | Prompt only. Fixtures first, queryable audit. |
 | [05-live-smoke-checklist.md](./05-live-smoke-checklist.md) | Not started | Prompt only. What to record when keys exist. No live calls while writing the checklist. |
 

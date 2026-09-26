@@ -464,6 +464,26 @@ export function catalogPrices(): CommercialContext["catalog"] {
   return planningCapabilityPrices()
 }
 
+/** Analysis owner: re-price an edited draft from layer-1 rates. The model does not supply prices. */
+export function finalizeDeskAnalysis(
+  draft: AnalysisDraft,
+  input: {
+    clientPriceCents: number
+    channelFeeBps: number
+    contingencyBps: number
+    deadlineIso: string | null
+  },
+): StoredAnalysis {
+  return finalizeAnalysis(draft, {
+    clientPriceCents: input.clientPriceCents,
+    channelFeeBps: input.channelFeeBps,
+    contingencyBps: input.contingencyBps,
+    deadlineIso: input.deadlineIso,
+    targetMarginBps: targetMarginBpsFromEnv(),
+    catalog: catalogPrices(),
+  })
+}
+
 export function commercialContext(input: AnalysisInput, now?: Date): CommercialContext {
   return {
     clientPriceCents: input.budgetCents,

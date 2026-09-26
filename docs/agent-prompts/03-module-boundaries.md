@@ -1,38 +1,25 @@
 # 03 — Module boundaries
 
-**Status: not started.** Prompt only. Do not implement this until stage 02 is verified.
+**Status: done.** Shipped on [PR #4](https://github.com/XtianBDevn/studio-operator/pull/4). Do not redo this stage. Do not start stage 04 from this file.
 
-## Outcome
+## Already done
 
-Make the desk a thin job state machine with small modules. The loop stays brief → qualify → price → approve → route → generate → QA → deliver. Behavior stays the same. The diff is boundaries, not a new product.
-
-Target modules, using the code that already exists:
+`src/server/studio.ts` keeps status transitions and calls the owners listed in `src/server/modules/owners.ts`:
 
 - Analysis — `src/lib/analysis.ts`, `src/server/services/analyze-brief.ts`
-- Catalog and pricing — `src/lib/catalog.ts` and the three layers from stage 01
-- Router — `src/lib/route.ts`, `src/lib/router-catalog.ts`
-- Provider — `src/server/services/providers.ts`, `src/server/services/higgsfield/`, `src/server/services/live-generation.ts`
-- QA — `src/lib/qa.ts`, repair caps in the desk
-- Autonomy — `src/lib/autonomy-policy.ts`, `src/server/supervise.ts`
-- Audit — queryable events, not only logs (stage 04 may deepen this; do not boil the ocean here)
+- Catalog and pricing — `src/lib/catalog.ts` (the three layers stay separate)
+- Router — `src/lib/route.ts`, `src/server/services/plan-from-analysis.ts`
+- Provider — `src/server/services/provider-run.ts` (mock previews and live Higgsfield steps)
+- QA — `src/lib/qa.ts`, `src/server/services/qa-desk.ts`
+- Autonomy — `src/lib/autonomy-policy.ts`, `src/server/supervise.ts`, `src/server/services/autonomy.ts`
+- Audit — `src/server/services/audit.ts` (read, write, and delete of `AuditEvent`; more event kinds wait for stage 04)
 
-`src/server/studio.ts` may keep the state transitions. It should call those modules instead of growing new policy inline.
+Behavior of the desk loop is unchanged. Live submit is still only the two workflows. Mock stays the default.
 
-## Constraints
+## If you are here
 
-- Obey [00-product-lock.md](./00-product-lock.md).
-- Do not rewrite the app. Move or re-export with a clear owner. Keep tests green without changing their expectations unless a move forces an import path update.
-- Do not collapse the three catalog layers. Do not add live models.
-- Do not add marketplace APIs, auth, webhooks, or a multi-tenant shell.
-- Mock stays the default. No live Higgsfield or OpenAI calls.
-
-## Success criteria
-
-- A reader can name which module owns analysis, pricing, routing, provider calls, QA, autonomy, and audit.
-- `studio.ts` is a thinner orchestrator, not a second copy of those policies.
-- Existing tests and `npm run build` pass. Add a focused test only where a boundary was easy to bypass before.
-- The PR says what moved and what behavior did not change.
+Confirm `src/server/modules/owners.ts` still names those seven owners and `npm run test:modules` passes. Then stop.
 
 ## Stop
 
-Stop after this boundary pass. Do not start fixtures, audit expansion, or live smoke in the same turn. Wait for verify.
+This stage is finished. Do not start fixtures, audit expansion, or live smoke. Wait for verify.

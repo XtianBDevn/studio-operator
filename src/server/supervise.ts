@@ -18,12 +18,12 @@ import { catalogById } from "@/lib/router-catalog"
 import { estimatedGenerationCents, spentGenerationCents } from "@/lib/types"
 import type { JobRepository } from "@/server/repositories/job-repository"
 import {
-  addAudit,
   addMessage,
   getAutonomySettings,
   getBeat,
   setBeat,
 } from "@/server/repositories/autonomy-repository"
+import { addAudit } from "@/server/services/audit"
 import {
   analyzeJob,
   appendClientNote,

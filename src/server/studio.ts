@@ -1,30 +1,43 @@
-import { finalizeAnalysis, validateAnalysisDraft, type StoredAnalysis } from "@/lib/analysis"
+/**
+ * Job state machine for brief → qualify → price → approve → route → generate → QA → deliver.
+ * Status transitions stay here. Policy is called from the module owners in
+ * `src/server/modules/owners.ts`: analysis, catalog, router, provider, QA, autonomy, audit.
+ */
+import { validateAnalysisDraft, type StoredAnalysis } from "@/lib/analysis"
 import { demoById, demoDeadline, isDemoJobId } from "@/lib/demos"
 import { assertAllowedOperation } from "@/lib/guardrails"
-import { evaluateQa, isConditionalRepair, type QaEvaluation } from "@/lib/qa"
+import { isConditionalRepair } from "@/lib/qa"
 import { recordingPause, type RecordingSnapshot } from "@/lib/recording"
 import { StudioError } from "@/lib/errors"
-import { assertLiveSubmittable } from "@/lib/live-workflows"
 import { computeProfitability } from "@/lib/profitability"
+import { applyOverride, linesFromStored, maxSpendCents, restage } from "@/lib/route"
 import { defaultChannelFeeBps, isSourceId, type SourceId } from "@/lib/sources"
 import type { Decision, JobDetail } from "@/lib/types"
 import { estimatedGenerationCents, spentGenerationCents } from "@/lib/types"
 import { canRebuildPlan, hasOpenGate } from "@/lib/workflow-policy"
-import { clearJobSupervision } from "@/server/repositories/autonomy-repository"
 import type { JobRepository } from "@/server/repositories/job-repository"
-import { catalogPrices, produceAnalysis, targetMarginBpsFromEnv } from "@/server/services/analyze-brief"
+import { finalizeDeskAnalysis, produceAnalysis } from "@/server/services/analyze-brief"
+import { clearJobSupervision } from "@/server/services/autonomy"
 import { draftClientDeliveryNote } from "@/server/services/delivery-note"
-import { MODEL_CATALOG } from "@/server/services/models"
-import { planFromAnalysis } from "@/server/services/plan-from-analysis"
-import { applyOverride, linesFromStored, maxSpendCents, restage } from "@/lib/route"
-import { requestHiggsfieldGeneration, localPreviewGeneration } from "@/server/services/providers"
 import {
   cancelGeneration,
   refreshGenerationStatus,
   retryGeneration,
-  runLiveSteps,
 } from "@/server/services/live-generation"
-import { readHiggsfieldCredentials } from "@/server/services/higgsfield"
+import { planFromAnalysis, plannedStepsFromRouteLines } from "@/server/services/plan-from-analysis"
+import {
+  assertLiveStepsSubmittable,
+  recordFinishingRevision,
+  runProviderSteps,
+  stepsAwaitingOutput,
+} from "@/server/services/provider-run"
+import {
+  evaluateJobQa,
+  marginAfter,
+  persistQa,
+  qaRepairDetail,
+  runApprovedRepair,
+} from "@/server/services/qa-desk"
 import { recommendRevision } from "@/server/services/revisions"
 
 const DEFAULT_CONTINGENCY_BPS = 1500
@@ -161,13 +174,11 @@ export async function saveHumanAnalysis(
     ...draft,
     decisionReasons: draft.decisionReasons.filter((reason) => !reason.startsWith("Desk:")),
   }
-  let document = finalizeAnalysis(draft, {
+  let document = finalizeDeskAnalysis(draft, {
     clientPriceCents: job.budgetCents,
     channelFeeBps: job.channelFeeBps,
     contingencyBps: job.contingencyBps,
     deadlineIso: job.deadline,
-    targetMarginBps: targetMarginBpsFromEnv(),
-    catalog: catalogPrices(),
   })
   if (intent === "approve") {
     document = withHumanDecision(
@@ -253,33 +264,7 @@ export async function saveRouteOverrides(
   })
   const ordered = restage(overridden)
   const outputs = job.analysis?.effective.deliverables.map((item) => item.name).slice(0, 4) ?? []
-  await repo.replaceSteps(
-    jobId,
-    ordered.map((line) => ({
-      position: line.position,
-      name: line.name,
-      selectedModel: line.modelId,
-      modelKind: line.capability,
-      purpose: line.why,
-      inputs: [
-        "Approved brief",
-        `Route ${line.stage}`,
-        `Role ${line.role}`,
-        `Alternative ${line.alternativeLabel}`,
-      ],
-      expectedOutputs: outputs.length > 0 ? outputs : [line.name],
-      estimatedAttempts: line.attempts,
-      unitCostCents: line.unitCostCents,
-      estimatedTotalCents: line.lineCents,
-      routeStage: line.stage,
-      routeRole: line.role,
-      whyFit: line.why,
-      failureMode: line.failureMode,
-      alternativeModel: line.alternativeModelId,
-      docsUrl: line.docsUrl,
-      substituteNote: line.substituteNote,
-    })),
-  )
+  await repo.replaceSteps(jobId, plannedStepsFromRouteLines(ordered, outputs))
   const total = maxSpendCents(ordered)
   await repo.openGate({
     jobId,
@@ -391,20 +376,9 @@ export async function runGeneration(repo: JobRepository, jobId: string): Promise
     throw new StudioError("Set a maximum production budget before generating.")
   }
 
-  const pending = job.steps.filter((step) => {
-    if (step.approvalStatus !== "approved") return false
-    if (isConditionalRepair(step.purpose)) return false
-    return !job.generations.some(
-      (generation) => generation.stepId === step.id && generation.status === "succeeded",
-    )
-  })
+  const pending = stepsAwaitingOutput(job)
   if (pending.length === 0) throw new StudioError("Every approved step already has an output.")
-  if (process.env.STUDIO_OPERATOR_MODE === "live") {
-    for (const step of pending) assertLiveSubmittable(step.selectedModel)
-    if (!readHiggsfieldCredentials()) {
-      throw new StudioError("Higgsfield credentials are not configured on the server. No request was sent.")
-    }
-  }
+  assertLiveStepsSubmittable(pending)
 
   const freshCost = pending.reduce((sum, step) => {
     const open = job.generations.find(
@@ -428,68 +402,8 @@ export async function runGeneration(repo: JobRepository, jobId: string): Promise
   }
 
   await repo.updateJob(jobId, { status: "generating" })
-
-  if (process.env.STUDIO_OPERATOR_MODE === "live") {
-    await runLiveSteps(repo, job)
-  } else {
-    await runMockSteps(repo, job, pending)
-  }
-
+  await runProviderSteps(repo, job, pending)
   await finishIfReady(repo, jobId)
-}
-
-async function runMockSteps(
-  repo: JobRepository,
-  job: JobDetail,
-  pending: JobDetail["steps"],
-): Promise<void> {
-  for (const step of pending) {
-    const running = job.generations.find(
-      (generation) =>
-        generation.stepId === step.id &&
-        (generation.status === "running" || generation.status === "queued"),
-    )
-    await repo.updateStep(step.id, { status: "running" })
-    const result = await requestHiggsfieldGeneration({
-      model: step.selectedModel,
-      title: job.title,
-      subtitle: step.name,
-      kind: step.modelKind,
-      costEstimateCents: running?.costEstimateCents ?? step.estimatedTotalCents,
-    })
-    const settingsJson = JSON.stringify({
-      mode: "mock",
-      model: step.selectedModel,
-      kind: step.modelKind,
-      purpose: step.purpose,
-    })
-    if (running) {
-      await repo.completeGeneration(running.id, {
-        status: "succeeded",
-        actualCostCents: result.actualCostCents,
-        outputUrl: result.outputUrl,
-        error: null,
-        completedAt: new Date(),
-      })
-      await repo.updateGeneration(running.id, { settingsJson, costSource: "mock", providerStatus: null })
-    } else {
-      await repo.createGeneration({
-        jobId: job.id,
-        stepId: step.id,
-        providerRequestId: result.providerRequestId,
-        model: step.selectedModel,
-        status: "succeeded",
-        costEstimateCents: step.estimatedTotalCents,
-        actualCostCents: result.actualCostCents,
-        outputUrl: result.outputUrl,
-        error: null,
-        settingsJson,
-        costSource: "mock",
-        completedAt: new Date(),
-      })
-    }
-    await repo.updateStep(step.id, { status: "complete" })
-  }
 }
 
 export async function cancelJobGeneration(
@@ -606,36 +520,7 @@ export async function decideRevision(
     )
   }
 
-  if (process.env.STUDIO_OPERATOR_MODE === "live") {
-    assertLiveSubmittable(MODEL_CATALOG.finishing.id)
-  }
-  const result = await requestHiggsfieldGeneration({
-    model: MODEL_CATALOG.finishing.id,
-    title: job.title,
-    subtitle: revision.affectedDeliverable,
-    kind: "finishing",
-    costEstimateCents: revision.expectedIncrementalCents,
-  })
-  await repo.updateRevision(revisionId, "approved")
-  await repo.createGeneration({
-    jobId,
-    stepId: null,
-    providerRequestId: result.providerRequestId,
-    model: MODEL_CATALOG.finishing.id,
-    status: "succeeded",
-    costEstimateCents: revision.expectedIncrementalCents,
-    actualCostCents: result.actualCostCents,
-    outputUrl: result.outputUrl,
-    error: null,
-    costSource: "mock",
-    settingsJson: JSON.stringify({
-      mode: "mock",
-      model: MODEL_CATALOG.finishing.id,
-      kind: "finishing",
-      note: "Finishing is a planning rate. It is not a live-submittable workflow.",
-    }),
-    completedAt: new Date(),
-  })
+  await recordFinishingRevision(repo, job, revision)
 }
 
 export async function requestWorkflowChange(
@@ -939,98 +824,6 @@ export async function resetDemoJob(repo: JobRepository, jobId: string, now = new
   })
 }
 
-function evaluateJobQa(job: JobDetail): QaEvaluation {
-  return evaluateQa({
-    brief: job.rawBrief,
-    deliverables: job.analysis?.effective.deliverables ?? [],
-    brandConstraints: job.analysis?.effective.brandConstraints ?? [],
-    steps: job.steps.map((step) => ({
-      id: step.id,
-      name: step.name,
-      purpose: step.purpose,
-      capability: step.modelKind,
-      selectedModel: step.selectedModel,
-      unitCostCents: step.unitCostCents,
-      estimatedAttempts: step.estimatedAttempts,
-      estimatedTotalCents: step.estimatedTotalCents,
-    })),
-    generations: job.generations.map((generation) => ({
-      stepId: generation.stepId,
-      status: generation.status,
-      model: generation.model,
-      actualCostCents: generation.actualCostCents,
-      costEstimateCents: generation.costEstimateCents,
-    })),
-    spentCents: spentGenerationCents(job.generations),
-    maxBudgetCents: job.maxBudgetCents,
-    clientPriceCents: job.budgetCents,
-    contingencyBps: job.contingencyBps,
-    channelFeeBps: job.channelFeeBps,
-  })
-}
-
-async function persistQa(
-  repo: JobRepository,
-  job: JobDetail,
-  evaluation: QaEvaluation,
-  autoRepaired: boolean,
-): Promise<void> {
-  await repo.saveQaReport({
-    jobId: job.id,
-    checklistJson: JSON.stringify(evaluation.checklist),
-    verdict: evaluation.verdict,
-    reason: evaluation.reason,
-    repairModelId: evaluation.repairModelId,
-    repairModelLabel: evaluation.repairModelLabel,
-    incrementalCents: evaluation.incrementalCents,
-    newTotalCents: evaluation.newTotalCents,
-    updatedMarginCents: evaluation.updatedMarginCents,
-    withinLimits: evaluation.withinLimits,
-    autoRepaired,
-  })
-}
-
-async function runApprovedRepair(
-  repo: JobRepository,
-  job: JobDetail,
-  evaluation: QaEvaluation,
-): Promise<void> {
-  assertAllowedOperation("generation.run_within_limits")
-  const step = job.steps.find((item) => isConditionalRepair(item.purpose))
-  if (!step || !evaluation.repairModelId) throw new StudioError("No approved continuity repair is on this plan.")
-  if (process.env.STUDIO_OPERATOR_MODE === "live") {
-    assertLiveSubmittable(step.selectedModel)
-  }
-  const result = localPreviewGeneration({
-    model: step.selectedModel,
-    title: job.title,
-    subtitle: step.name,
-    kind: step.modelKind,
-    costEstimateCents: evaluation.incrementalCents,
-  })
-  await repo.createGeneration({
-    jobId: job.id,
-    stepId: step.id,
-    providerRequestId: result.providerRequestId,
-    model: step.selectedModel,
-    status: "succeeded",
-    costEstimateCents: evaluation.incrementalCents,
-    actualCostCents: result.actualCostCents,
-    outputUrl: result.outputUrl,
-    error: null,
-    costSource: "mock",
-    settingsJson: JSON.stringify({
-      mode: "mock",
-      qaRepair: true,
-      model: step.selectedModel,
-      kind: step.modelKind,
-      note: "QA repair preview. This model is planning-only. No Higgsfield request was sent.",
-    }),
-    completedAt: new Date(),
-  })
-  await repo.updateStep(step.id, { status: "complete" })
-}
-
 async function ensureDeliveryNote(repo: JobRepository, job: JobDetail): Promise<void> {
   assertAllowedOperation("delivery.record_internal")
   const names = job.analysis?.effective.deliverables.map((item) => item.name) ?? []
@@ -1043,20 +836,3 @@ async function ensureDeliveryNote(repo: JobRepository, job: JobDetail): Promise<
   })
 }
 
-function marginAfter(job: JobDetail, spentCents: number): number {
-  return computeProfitability({
-    clientPriceCents: job.budgetCents,
-    estimatedGenerationCents: spentCents,
-    contingencyBps: job.contingencyBps,
-    channelFeeBps: job.channelFeeBps,
-    actualGenerationCents: spentCents,
-    maxBudgetCents: job.maxBudgetCents,
-  }).expectedGrossMarginCents
-}
-
-function qaRepairDetail(evaluation: QaEvaluation): string {
-  const incremental = (evaluation.incrementalCents / 100).toFixed(2)
-  const total = (evaluation.newTotalCents / 100).toFixed(2)
-  const margin = (evaluation.updatedMarginCents / 100).toFixed(2)
-  return `${evaluation.reason} Model ${evaluation.repairModelLabel ?? "unselected"}. Incremental ${incremental} USD. New total ${total} USD. Updated margin ${margin} USD. ${evaluation.blockReason ?? ""}`.trim()
-}

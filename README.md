@@ -67,7 +67,7 @@ npm run smoke
 
 Future cloud agents rebuild one stage at a time from [`docs/agent-prompts/`](docs/agent-prompts/README.md). Read [`00-product-lock.md`](docs/agent-prompts/00-product-lock.md) first. Finish the assigned stage, run its checks, and wait for verify before the next file. Do not pile the remaining stages into one diff.
 
-Stage 01 (catalog truth table) is done. Stage 02 is this pack. Stages 03–05 are prompts only until a person assigns them.
+Stage 01 (catalog truth table) and stage 03 (module boundaries) are done. Stage 02 is this pack. Stages 04 and 05 are prompts only until a person assigns them.
 
 ## What you can do
 
@@ -99,6 +99,8 @@ Contingency is a percent of estimated generation. The channel fee is a percent o
 - `src/app/connection/page.tsx` — confirmed connection test
 - `src/lib/guardrails.ts` — forbidden marketplace operations
 - `prisma/schema.prisma` — Job, BriefAnalysis, WorkflowStep, Generation, Revision, ApprovalGate, ConnectionTest, QaReport, DeliveryNote, AutonomySettings, ClientAccount, ClientMemory, LikenessConsent, ClientJobLink, ClientMessage, AuditEvent, SuperviseCursor
+- `src/server/modules/owners.ts` — which module owns analysis, catalog, routing, provider calls, QA, autonomy, and audit
+- `src/server/studio.ts` — status transitions only. It calls those owners.
 
 To move to Postgres later, keep the repository interface and replace `PrismaJobRepository`. Do not call Prisma from the UI.
 
