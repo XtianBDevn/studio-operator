@@ -1,0 +1,339 @@
+// Studio Operator local persistence (SQLite).
+// Swap the repository implementation to move this model to Postgres.
+// Marketplace accounts, proposals, and deliveries are intentionally not stored:
+// a job's source is only a label for text the operator pasted in.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Job {
+  id              String    @id @default(cuid())
+  title           String
+  source          String
+  rawBrief        String
+  budgetCents     Int
+  deadline        DateTime?
+  status          String
+  clientNotes     String    @default("")
+  channelFeeBps   Int       @default(0)
+  contingencyBps  Int       @default(1500)
+  maxBudgetCents  Int?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  analysis    BriefAnalysis?
+  assets      ReferenceAsset[]
+  steps       WorkflowStep[]
+  generations Generation[]
+  revisions    Revision[]
+  approvals    ApprovalGate[]
+  qaReports    QaReport[]
+  deliveryNote DeliveryNote?
+
+  @@index([status])
+  @@index([source])
+  @@index([createdAt])
+}
+
+model ReferenceAsset {
+  id        String   @id @default(cuid())
+  jobId     String
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  label     String
+  url       String
+  kind      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([jobId])
+}
+
+model BriefAnalysis {
+  id           String   @id @default(cuid())
+  jobId        String   @unique
+  job          Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  originalJson String
+  editedJson   String?
+  decision     String
+  confidence   Int
+  modelLabel   String
+  provider     String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([decision])
+  @@index([provider])
+}
+
+model WorkflowStep {
+  id                  String   @id @default(cuid())
+  jobId               String
+  job                 Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  position            Int
+  name                String
+  selectedModel       String
+  modelKind           String
+  purpose             String
+  inputs              String
+  expectedOutputs     String
+  estimatedAttempts   Int
+  unitCostCents       Int
+  estimatedTotalCents Int
+  routeStage          String?
+  routeRole           String?
+  whyFit              String?
+  failureMode         String?
+  alternativeModel    String?
+  docsUrl             String?
+  substituteNote      String?
+  approvalStatus      String
+  status              String
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  generations         Generation[]
+
+  @@unique([jobId, position])
+  @@index([jobId])
+  @@index([approvalStatus])
+}
+
+model Generation {
+  id                String    @id @default(cuid())
+  jobId             String
+  job               Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  stepId            String?
+  step              WorkflowStep? @relation(fields: [stepId], references: [id], onDelete: SetNull)
+  providerRequestId String
+  model             String
+  status            String
+  providerStatus    String?
+  statusUrl         String?
+  cancelUrl         String?
+  correlationId     String?
+  settingsJson      String?
+  assetKind         String?
+  localPath         String?
+  providerOutputUrl String?
+  costEstimateCents Int
+  actualCostCents   Int?
+  estimatedCredits  String?
+  estimatedUsd      String?
+  actualCredits     String?
+  actualUsd         String?
+  costSource        String?
+  retryOfId         String?
+  outputUrl         String?
+  error             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  completedAt       DateTime?
+
+  @@index([jobId])
+  @@index([stepId])
+  @@index([status])
+  @@index([providerRequestId])
+  @@index([retryOfId])
+}
+
+// A confirmed server-side probe of the smallest documented image request.
+// Stores provider ids and redacted errors. Never stores credentials.
+model ConnectionTest {
+  id                String   @id @default(cuid())
+  endpointId        String
+  confirmed         Boolean
+  providerRequestId String?
+  statusUrl         String?
+  cancelUrl         String?
+  correlationId     String?
+  providerStatus    String?
+  appStatus         String
+  estimatedCredits  String?
+  estimatedUsd      String?
+  costEstimateCents Int?
+  actualCostCents   Int?
+  actualCredits     String?
+  actualUsd         String?
+  costSource        String?
+  outputUrl         String?
+  localPath         String?
+  settingsJson      String?
+  error             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([createdAt])
+}
+
+model Revision {
+  id                       String   @id @default(cuid())
+  jobId                    String
+  job                      Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  clientNote               String
+  affectedDeliverable      String
+  recommendedAction        String
+  expectedIncrementalCents Int
+  approvalStatus           String
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  @@index([jobId])
+  @@index([approvalStatus])
+}
+
+model ApprovalGate {
+  id         String    @id @default(cuid())
+  jobId      String
+  job        Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  kind       String
+  status     String
+  summary    String
+  detail     String    @default("")
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  resolvedAt DateTime?
+
+  @@index([jobId])
+  @@index([kind])
+  @@index([status])
+}
+
+model QaReport {
+  id                 String   @id @default(cuid())
+  jobId              String
+  job                Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  checklistJson      String
+  verdict            String
+  reason             String
+  repairModelId      String?
+  repairModelLabel   String?
+  incrementalCents   Int      @default(0)
+  newTotalCents      Int
+  updatedMarginCents Int
+  withinLimits       Boolean
+  autoRepaired       Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([jobId])
+  @@index([verdict])
+}
+
+model DeliveryNote {
+  id         String   @id @default(cuid())
+  jobId      String   @unique
+  job        Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  body       String
+  provider   String
+  modelLabel String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+// Supervised client agent. These records are not marketplace accounts.
+model AutonomySettings {
+  id                            String   @id
+  maxAutoSpendPerJobCents       Int
+  maxAutoSpendPerRepairCents    Int
+  maxAttemptsJson               String
+  allowedFamiliesJson           String
+  autoSendJson                  String
+  shareConceptsAutomatically    Boolean
+  finalDeliveryRequiresApproval Boolean
+  createdAt                     DateTime @default(now())
+  updatedAt                     DateTime @updatedAt
+}
+
+model ClientAccount {
+  id        String            @id
+  name      String
+  channel   String
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  memory    ClientMemory?
+  consents  LikenessConsent[]
+  links     ClientJobLink[]
+
+  @@index([name])
+}
+
+model ClientMemory {
+  id                         String        @id @default(cuid())
+  accountId                  String        @unique
+  account                    ClientAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  logosJson                  String        @default("[]")
+  colorsJson                 String        @default("[]")
+  fontsJson                  String        @default("[]")
+  tone                       String        @default("")
+  productDetails             String        @default("")
+  winningAssetsJson          String        @default("[]")
+  rejectedStylesJson         String        @default("[]")
+  deliveryPreferences        String        @default("")
+  communicationPreferences   String        @default("")
+  createdAt                  DateTime      @default(now())
+  updatedAt                  DateTime      @updatedAt
+}
+
+model LikenessConsent {
+  id          String        @id @default(cuid())
+  accountId   String
+  account     ClientAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  personLabel String
+  kind        String
+  useScope    String
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([accountId])
+}
+
+model ClientJobLink {
+  jobId      String        @id
+  accountId  String
+  templateId String
+  account    ClientAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@index([accountId])
+}
+
+model ClientMessage {
+  id          String   @id @default(cuid())
+  jobId       String
+  kind        String
+  channel     String
+  disposition String
+  body        String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([jobId])
+  @@index([disposition])
+}
+
+model AuditEvent {
+  id        String   @id @default(cuid())
+  jobId     String?
+  kind      String
+  summary   String
+  detail    String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([jobId])
+  @@index([kind])
+  @@index([createdAt])
+}
+
+model SuperviseCursor {
+  jobId     String   @id
+  beat      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
