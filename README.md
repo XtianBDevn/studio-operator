@@ -63,6 +63,12 @@ Check the workflow without the browser:
 npm run smoke
 ```
 
+## Agent rebuild pack (v2)
+
+Future cloud agents rebuild one stage at a time from [`docs/agent-prompts/`](docs/agent-prompts/README.md). Read [`00-product-lock.md`](docs/agent-prompts/00-product-lock.md) first. Finish the assigned stage, run its checks, and wait for verify before the next file. Do not pile the remaining stages into one diff.
+
+Stage 01 (catalog truth table) is done. Stage 02 is this pack. Stages 03–05 are prompts only until a person assigns them.
+
 ## What you can do
 
 1. Open the pipeline. Seeded jobs fill New, Needs Review, Approved, Generating, QA, Delivered, and Rejected.
