@@ -4,6 +4,7 @@ import { assertAllowedOperation } from "@/lib/guardrails"
 import { evaluateQa, isConditionalRepair, type QaEvaluation } from "@/lib/qa"
 import { recordingPause, type RecordingSnapshot } from "@/lib/recording"
 import { StudioError } from "@/lib/errors"
+import { assertLiveSubmittable } from "@/lib/live-workflows"
 import { computeProfitability } from "@/lib/profitability"
 import { defaultChannelFeeBps, isSourceId, type SourceId } from "@/lib/sources"
 import type { Decision, JobDetail } from "@/lib/types"
@@ -389,9 +390,6 @@ export async function runGeneration(repo: JobRepository, jobId: string): Promise
   if (job.maxBudgetCents == null) {
     throw new StudioError("Set a maximum production budget before generating.")
   }
-  if (process.env.STUDIO_OPERATOR_MODE === "live" && !readHiggsfieldCredentials()) {
-    throw new StudioError("Higgsfield credentials are not configured on the server. No request was sent.")
-  }
 
   const pending = job.steps.filter((step) => {
     if (step.approvalStatus !== "approved") return false
@@ -401,6 +399,12 @@ export async function runGeneration(repo: JobRepository, jobId: string): Promise
     )
   })
   if (pending.length === 0) throw new StudioError("Every approved step already has an output.")
+  if (process.env.STUDIO_OPERATOR_MODE === "live") {
+    for (const step of pending) assertLiveSubmittable(step.selectedModel)
+    if (!readHiggsfieldCredentials()) {
+      throw new StudioError("Higgsfield credentials are not configured on the server. No request was sent.")
+    }
+  }
 
   const freshCost = pending.reduce((sum, step) => {
     const open = job.generations.find(
@@ -602,22 +606,16 @@ export async function decideRevision(
     )
   }
 
-  const live = process.env.STUDIO_OPERATOR_MODE === "live"
-  const result = live
-    ? localPreviewGeneration({
-        model: MODEL_CATALOG.finishing.id,
-        title: job.title,
-        subtitle: revision.affectedDeliverable,
-        kind: "finishing",
-        costEstimateCents: revision.expectedIncrementalCents,
-      })
-    : await requestHiggsfieldGeneration({
-        model: MODEL_CATALOG.finishing.id,
-        title: job.title,
-        subtitle: revision.affectedDeliverable,
-        kind: "finishing",
-        costEstimateCents: revision.expectedIncrementalCents,
-      })
+  if (process.env.STUDIO_OPERATOR_MODE === "live") {
+    assertLiveSubmittable(MODEL_CATALOG.finishing.id)
+  }
+  const result = await requestHiggsfieldGeneration({
+    model: MODEL_CATALOG.finishing.id,
+    title: job.title,
+    subtitle: revision.affectedDeliverable,
+    kind: "finishing",
+    costEstimateCents: revision.expectedIncrementalCents,
+  })
   await repo.updateRevision(revisionId, "approved")
   await repo.createGeneration({
     jobId,
@@ -629,12 +627,12 @@ export async function decideRevision(
     actualCostCents: result.actualCostCents,
     outputUrl: result.outputUrl,
     error: null,
-    costSource: live ? "local_preview" : "mock",
+    costSource: "mock",
     settingsJson: JSON.stringify({
-      mode: live ? "local_preview" : "mock",
+      mode: "mock",
       model: MODEL_CATALOG.finishing.id,
       kind: "finishing",
-      note: "Finishing has no verified Higgsfield endpoint.",
+      note: "Finishing is a planning rate. It is not a live-submittable workflow.",
     }),
     completedAt: new Date(),
   })
@@ -1000,7 +998,9 @@ async function runApprovedRepair(
   assertAllowedOperation("generation.run_within_limits")
   const step = job.steps.find((item) => isConditionalRepair(item.purpose))
   if (!step || !evaluation.repairModelId) throw new StudioError("No approved continuity repair is on this plan.")
-  const live = process.env.STUDIO_OPERATOR_MODE === "live"
+  if (process.env.STUDIO_OPERATOR_MODE === "live") {
+    assertLiveSubmittable(step.selectedModel)
+  }
   const result = localPreviewGeneration({
     model: step.selectedModel,
     title: job.title,
@@ -1018,13 +1018,13 @@ async function runApprovedRepair(
     actualCostCents: result.actualCostCents,
     outputUrl: result.outputUrl,
     error: null,
-    costSource: live ? "local_preview" : "mock",
+    costSource: "mock",
     settingsJson: JSON.stringify({
-      mode: live ? "local_preview" : "mock",
+      mode: "mock",
       qaRepair: true,
       model: step.selectedModel,
       kind: step.modelKind,
-      note: "QA repair preview. Seedance 2.5 video edit is not a wired live endpoint. No Higgsfield request was sent.",
+      note: "QA repair preview. This model is planning-only. No Higgsfield request was sent.",
     }),
     completedAt: new Date(),
   })

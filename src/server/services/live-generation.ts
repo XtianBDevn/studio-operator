@@ -3,7 +3,7 @@ import type { GenerationDeskStatus, GenerationRecord, JobDetail, WorkflowStepRec
 import { spentGenerationCents } from "@/lib/types"
 import type { JobRepository } from "@/server/repositories/job-repository"
 import { localPreviewGeneration } from "@/server/services/providers"
-import { wiredLiveEndpoint } from "@/lib/router-catalog"
+import { assertLiveSubmittable } from "@/lib/live-workflows"
 import {
   HiggsfieldRequestError,
   buildKlingStandardInput,
@@ -45,7 +45,13 @@ function safeMessage(error: unknown): string {
 }
 
 export async function runLiveSteps(repo: JobRepository, job: JobDetail): Promise<void> {
-  const client = clientOrThrow()
+  let client: HiggsfieldClient | null = null
+  const clientOnce = (): HiggsfieldClient => {
+    if (client) return client
+    const created = clientOrThrow()
+    client = created
+    return created
+  }
   let blocked = false
   for (const step of job.steps) {
     if (step.approvalStatus !== "approved") continue
@@ -59,7 +65,9 @@ export async function runLiveSteps(repo: JobRepository, job: JobDetail): Promise
       blocked = true
       continue
     }
-    const outcome = await progressStep(repo, job, step, latest, client)
+    // Layer 3 guard runs before the client exists, so a planning-only step never reaches the network.
+    assertLiveSubmittable(step.selectedModel)
+    const outcome = await progressStep(repo, job, step, latest, clientOnce())
     if (outcome !== "succeeded") blocked = true
   }
   if (blocked) {
@@ -95,12 +103,7 @@ async function progressStep(
     return updated?.generations.find((generation) => generation.id === latest.id)?.status ?? latest.status
   }
 
-  const wired = wiredLiveEndpoint(step.selectedModel)
-  if (!wired) {
-    if (step.modelKind === "image" || step.modelKind === "video") return unwiredStep(repo, job, step)
-    return localStep(repo, job, step, null)
-  }
-
+  const wired = assertLiveSubmittable(step.selectedModel)
   const body = wired === "soul" ? soulBody(job, step) : klingBody(job, step)
   let generationId = ""
   try {
@@ -349,15 +352,7 @@ export async function retryGeneration(repo: JobRepository, jobId: string, genera
     await localStep(repo, job, step, previous.id)
     return
   }
-  const wired = wiredLiveEndpoint(step.selectedModel)
-  if (!wired) {
-    if (step.modelKind === "image" || step.modelKind === "video") {
-      await unwiredStep(repo, job, step)
-      return
-    }
-    await localStep(repo, job, step, previous.id)
-    return
-  }
+  const wired = assertLiveSubmittable(step.selectedModel)
   const client = clientOrThrow()
   const body = wired === "soul" ? soulBody(job, step) : klingBody(job, step)
   let generationIdNew = ""
@@ -459,34 +454,6 @@ async function applyResult(repo: JobRepository, jobId: string, generationId: str
     error,
     completedAt: finished ? new Date() : null,
   })
-}
-
-async function unwiredStep(
-  repo: JobRepository,
-  job: JobDetail,
-  step: WorkflowStepRecord,
-): Promise<string> {
-  await repo.createGeneration({
-    jobId: job.id,
-    stepId: step.id,
-    providerRequestId: `unwired_${crypto.randomUUID()}`,
-    model: step.selectedModel,
-    status: "failed",
-    costEstimateCents: step.estimatedTotalCents,
-    actualCostCents: null,
-    outputUrl: null,
-    error:
-      "No request was sent. This model is in the catalog, but live submit is implemented only for SOUL V2 and Kling 3.0 Standard text-to-video.",
-    costSource: null,
-    settingsJson: JSON.stringify({
-      mode: "unwired",
-      model: step.selectedModel,
-      kind: step.modelKind,
-    }),
-    completedAt: new Date(),
-  })
-  await repo.updateStep(step.id, { status: "failed" })
-  return "failed"
 }
 
 function promptFor(job: JobDetail, step: WorkflowStepRecord): string {

@@ -44,6 +44,7 @@ Analysis uses GPT-6 Astra through the OpenAI Responses API when `OPENAI_API_KEY`
 ```bash
 npm run test:analysis
 npm run test:router
+npm run test:catalog
 npm run test:qa
 npm run test:autonomy
 npm run test:higgsfield
@@ -103,11 +104,13 @@ The pattern is Explore → Choose → Control → Ship → Repair → Finish →
 
 Every billed step shows the selected model, why it fits, the documented limit, an alternative, attempts, the desk planning rate, and the line total. The maximum authorized spend is the sum of those lines. Changing the model or the attempt count updates that maximum on the page immediately. Save the route, then approve the workflow and a maximum that covers it. Generation after approval stays inside that maximum.
 
-Planning rates stay at the capability prices already used by analysis: image $8, video $45, voice $15, editing $25, finishing $20. They are not Higgsfield list prices. A live call that this desk can submit still estimates credits and USD first.
+The catalog is a truth table with three layers (`src/lib/catalog.ts`):
 
-The catalog is grouped SEARCH, CONTROL, SHIP, and FINISH from the [image index](https://docs.higgsfield.ai/docs/models/image-generation.md) and [video index](https://docs.higgsfield.ai/docs/models/video-generation.md) checked on 2026-09-25. Seedream, Flux, Veo, Topaz, Speak, lip sync, and caption tools were not on those indexes. Substitutes are named on the step: Marketing Studio Image or Grok Image 2.0 for product references, Kling 3.0 Pro or Seedance 2.5 or Cinema Studio 4.0 for premium motion, PixVerse V6 or Wan 2.6 for talking scenes, and a desk finish pass where no upscaler was documented.
+1. **Planning capability rates** (`src/lib/planning-rates.ts`). Image $8, video $45, voice $15, editing $25, finishing $20. These are desk planning rates, not provider list prices. Analysis never receives model ids or list prices.
+2. **Routable model ids** (`src/lib/router-catalog.ts`). SEARCH, CONTROL, SHIP, and FINISH from the [image index](https://docs.higgsfield.ai/docs/models/image-generation.md) and [video index](https://docs.higgsfield.ai/docs/models/video-generation.md) checked on 2026-09-25. Seedream, Flux, Veo, Topaz, Speak, lip sync, and caption tools were not on those indexes. Substitutes are named on the step: Marketing Studio Image or Grok Image 2.0 for product references, Kling 3.0 Pro or Seedance 2.5 or Cinema Studio 4.0 for premium motion, PixVerse V6 or Wan 2.6 for talking scenes, and a desk finish pass where no upscaler was documented.
+3. **Live-submittable workflows** (`src/lib/live-workflows.ts`). Only SOUL V2 still and Kling 3.0 Standard text-to-video. In `STUDIO_OPERATOR_MODE=live`, generating a route step outside that pair fails with a clear error before any network call. Mock mode remains the default and previews every routable id locally.
 
-Live submit is still only SOUL V2 and Kling 3.0 Standard text-to-video. Other catalog ids are planning choices. Mock mode previews them locally and does not call the network.
+The route shows each model as **Live submit** or **Planning only**. A planning rate on a line is not a claim that the model is wired.
 
 ## Higgsfield
 
@@ -124,7 +127,7 @@ The adapter follows the current REST docs, not the blocking TypeScript `subscrib
 
 `completed` is stored as desk status `succeeded`. If polling passes `HIGGSFIELD_POLL_TIMEOUT_MS`, the desk status is `timed_out` and the provider status stays `queued` or `in_progress`. Failed, NSFW, canceled, and timed-out rows are not charged. When the status payload has no USD amount, the recorded cost for a completed job is the pre-submit estimate (`provider_estimate`). Completed files are copied under `storage/` and served by this app.
 
-Webhooks are documented, but this local app has no public HTTPS endpoint. Polling the returned status URL is the recovery path. Voice, editing, and finishing have no verified generation endpoint here, so those steps stay local previews even in live mode. Mock mode never calls the network.
+Webhooks are documented, but this local app has no public HTTPS endpoint. Polling the returned status URL is the recovery path. Voice, editing, finishing, and every routable id outside the two live workflows are refused in live mode before a provider call. Mock mode never calls the network and can still preview them locally.
 
 ## QA and recording
 
@@ -132,7 +135,7 @@ QA compares each succeeded output with the approved brief and stores a checklist
 
 A repair runs on its own only when the approved plan already priced that step, the incremental cost stays inside the step and the job maximum, and the attempt stays inside the approved limit. The desk shows the reason, the selected model, the incremental cost, the new total, and the updated margin. Anything outside those limits opens a human gate and does not generate.
 
-Two seeded briefs use that path. **After the Rain: Glass Monument** is a 72-hour Upwork-style package: a short film in 9:16 and 16:9 plus three keyframes. Its route is Z-Image Turbo for inexpensive concepts, Marketing Studio for controlled keyframes, Kling 3.0 Pro for premium motion, Seedance 2.5 video edit for one continuity repair, and a local finish. **Night Orchard: Slow Orbit** is a different problem: Grok Image 2.0 locks the hero still and Cinema Studio 4.0 carries the orbit. It does not add a concept batch or a repair. Planning rates are unchanged. Seedance and Cinema Studio are catalog choices; live submit is still only SOUL V2 and Kling 3.0 Standard. A QA repair of Seedance is a local preview and does not call Higgsfield.
+Two seeded briefs use that path. **After the Rain: Glass Monument** is a 72-hour Upwork-style package: a short film in 9:16 and 16:9 plus three keyframes. Its route is Z-Image Turbo for inexpensive concepts, Marketing Studio for controlled keyframes, Kling 3.0 Pro for premium motion, Seedance 2.5 video edit for one continuity repair, and a local finish. **Night Orchard: Slow Orbit** is a different problem: Grok Image 2.0 locks the hero still and Cinema Studio 4.0 carries the orbit. It does not add a concept batch or a repair. Planning rates are unchanged. Seedance and Cinema Studio are routable planning choices. Live submit is still only SOUL V2 and Kling 3.0 Standard. A QA repair of Seedance is a mock preview. In live mode that repair fails before any provider call.
 
 Recording mode (`/record`) is laid out for a desktop capture. It uses large status labels, a reset back to the seeded brief, and one continue button per stage: analysis, approval, generation, QA, and delivery. The page shows a generation ledger, client price beside the channel fee, API cost, contingency, and expected gross profit, then download links and a delivery note drafted by GPT-6 Astra. The note names deliverables only. Reset is limited to the two demo jobs and refreshes the deadline so analysis does not see a past date.
 
@@ -154,4 +157,4 @@ Proposals, change orders, and delivery packages stay drafts on email and the por
 
 ## Out of scope in this build
 
-Marketplace OAuth, sending proposals, accepting contracts, and auth. The client agent drafts those messages for a person. It does not perform them. Analysis calls OpenAI only when `OPENAI_API_KEY` is set. Live Higgsfield submit is limited to the two wired workflows above. A Seedance continuity repair stays a local preview.
+Marketplace OAuth, sending proposals, accepting contracts, and auth. The client agent drafts those messages for a person. It does not perform them. Analysis calls OpenAI only when `OPENAI_API_KEY` is set. Live Higgsfield submit is limited to the two wired workflows above. Live smoke evidence is still open. A Seedance continuity repair is planning-only.

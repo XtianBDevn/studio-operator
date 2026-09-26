@@ -14,6 +14,7 @@
     "test:analysis": "STUDIO_ANALYSIS_MODE=mock tsx scripts/analysis.test.ts",
     "test:higgsfield": "node scripts/ensure-env.mjs && prisma generate && rm -f prisma/higgsfield.db prisma/higgsfield.db-journal && DATABASE_URL=file:./higgsfield.db prisma migrate deploy && DATABASE_URL=file:./higgsfield.db tsx scripts/higgsfield.test.ts",
     "test:router": "tsx scripts/router.test.ts",
+    "test:catalog": "tsx scripts/catalog.test.ts",
     "test:qa": "tsx scripts/qa.test.ts",
     "test:autonomy": "tsx scripts/autonomy.test.ts && node scripts/ensure-env.mjs && prisma generate && rm -f prisma/autonomy.db prisma/autonomy.db-journal && DATABASE_URL=file:./autonomy.db prisma migrate deploy && DATABASE_URL=file:./autonomy.db tsx prisma/seed.ts && DATABASE_URL=file:./autonomy.db tsx scripts/autonomy-walk.ts",
     "db:reset": "rm -f prisma/dev.db prisma/dev.db-journal && prisma migrate deploy && tsx prisma/seed.ts"
