@@ -1,8 +1,12 @@
 import type { Capability } from "@/lib/analysis"
 
 /**
- * Desk planning rates. These are not Higgsfield list prices.
- * The authenticated estimate API is the quote for a live image or video call.
+ * Layer 1 — Planning capability rates.
+ *
+ * Desk economics for image, video, voice, editing, and finishing.
+ * These are planning rates, not Higgsfield or any other provider list price.
+ * Analysis and the route calculator use only these figures. Models must not invent prices.
+ * A live submit that this desk can actually send still requests a provider estimate first.
  */
 export const PLANNING_RATES: Record<Capability, { unitCostCents: number; unitLabel: string }> = {
   image: { unitCostCents: 800, unitLabel: "still" },
@@ -13,4 +17,15 @@ export const PLANNING_RATES: Record<Capability, { unitCostCents: number; unitLab
 }
 
 export const PLANNING_RATE_NOTE =
-  "Costs are desk planning rates for the capability, not a Higgsfield list price. Live image and video calls that this desk can submit still request an estimate before any paid generation."
+  "Costs are desk planning rates for the capability, not a provider list price. They are not a Higgsfield quote. A live submit this desk can send still requests an estimate before any paid generation."
+
+/** Layer 1 prices passed into the desk calculator. No model ids and no provider quotes. */
+export function planningCapabilityPrices(): Record<Capability, { unitCostCents: number }> {
+  return {
+    image: { unitCostCents: PLANNING_RATES.image.unitCostCents },
+    video: { unitCostCents: PLANNING_RATES.video.unitCostCents },
+    voice: { unitCostCents: PLANNING_RATES.voice.unitCostCents },
+    editing: { unitCostCents: PLANNING_RATES.editing.unitCostCents },
+    finishing: { unitCostCents: PLANNING_RATES.finishing.unitCostCents },
+  }
+}

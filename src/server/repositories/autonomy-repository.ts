@@ -11,6 +11,11 @@ import {
 import type { RouteRole } from "@/lib/router-catalog"
 import { ROUTE_ROLES } from "@/lib/router-catalog"
 import { prisma } from "@/server/db"
+import { addAudit, listAudit, type AuditRecord } from "@/server/services/audit"
+import { clearJobSupervision } from "@/server/services/autonomy"
+
+export type { AuditRecord }
+export { addAudit, listAudit, clearJobSupervision }
 
 const SETTINGS_ID = "studio"
 
@@ -38,14 +43,6 @@ export type MessageRecord = {
   channel: string
   disposition: string
   body: string
-  createdAt: string
-}
-
-export type AuditRecord = {
-  id: string
-  kind: string
-  summary: string
-  detail: string
   createdAt: string
 }
 
@@ -112,20 +109,6 @@ export async function listMessages(jobId: string): Promise<MessageRecord[]> {
   }))
 }
 
-export async function listAudit(jobId: string): Promise<AuditRecord[]> {
-  const rows = await prisma.auditEvent.findMany({
-    where: { jobId },
-    orderBy: { createdAt: "asc" },
-  })
-  return rows.map((row) => ({
-    id: row.id,
-    kind: row.kind,
-    summary: row.summary,
-    detail: row.detail,
-    createdAt: row.createdAt.toISOString(),
-  }))
-}
-
 export async function addMessage(input: {
   jobId: string
   kind: MessageKind
@@ -134,22 +117,6 @@ export async function addMessage(input: {
   body: string
 }): Promise<void> {
   await prisma.clientMessage.create({ data: input })
-}
-
-export async function addAudit(input: {
-  jobId: string
-  kind: string
-  summary: string
-  detail?: string
-}): Promise<void> {
-  await prisma.auditEvent.create({
-    data: {
-      jobId: input.jobId,
-      kind: input.kind,
-      summary: input.summary,
-      detail: input.detail ?? "",
-    },
-  })
 }
 
 export async function getBeat(jobId: string): Promise<string | null> {
@@ -163,14 +130,6 @@ export async function setBeat(jobId: string, beat: string): Promise<void> {
     create: { jobId, beat },
     update: { beat },
   })
-}
-
-export async function clearJobSupervision(jobId: string): Promise<void> {
-  await prisma.$transaction([
-    prisma.clientMessage.deleteMany({ where: { jobId } }),
-    prisma.auditEvent.deleteMany({ where: { jobId } }),
-    prisma.superviseCursor.deleteMany({ where: { jobId } }),
-  ])
 }
 
 function settingsRow(settings: AutonomySettings) {

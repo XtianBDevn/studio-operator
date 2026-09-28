@@ -10,6 +10,7 @@ import {
   stagesFromLines,
   type RouteLine,
 } from "@/lib/route"
+import { CATALOG_OPERATOR_NOTE, modelLayerLabel } from "@/lib/live-workflows"
 import { PLANNING_RATE_NOTE } from "@/lib/planning-rates"
 import {
   catalogByRole,
@@ -69,6 +70,7 @@ export function RouteBoard({
           Maximum authorized spend for this route: <span className="font-medium tabular-nums">{formatMoney(spend)}</span>
         </p>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">{PLANNING_RATE_NOTE}</p>
+        <p className="mt-1 text-xs leading-5 text-muted-foreground">{CATALOG_OPERATOR_NOTE}</p>
       </div>
       {notes.length > 0 ? (
         <ul className="space-y-1 text-xs leading-5 text-muted-foreground">
@@ -191,7 +193,7 @@ function RouteLineView({
                 <optgroup key={role} label={role}>
                   {catalogByRole(role).map((model) => (
                     <option key={model.id} value={model.id}>
-                      {model.label}
+                      {model.label} · {modelLayerLabel(model.id)}
                     </option>
                   ))}
                 </optgroup>
@@ -225,7 +227,7 @@ function RouteLineView({
       ) : null}
       <p className="text-xs leading-5 text-muted-foreground">
         {line.modelLabel} · {line.modelId}
-        {line.liveSubmit ? " · live submit wired" : " · not a live submit in this desk"}
+        {line.liveSubmit ? " · Live submit" : " · Planning only — not sent in live mode"}
       </p>
       <p className="text-xs tabular-nums text-muted-foreground">
         {line.capped

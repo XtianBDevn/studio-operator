@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { centsToDollarInput, formatMoney, formatPercentFromBps } from "@/lib/money"
 import type { Profitability } from "@/lib/profitability"
 import { recordingPause, type RecordingSnapshot } from "@/lib/recording"
+import { modelLayerLabel } from "@/lib/live-workflows"
 import { catalogById } from "@/lib/router-catalog"
 import { sourceLabel } from "@/lib/sources"
 import { statusLabel } from "@/lib/statuses"
@@ -76,6 +77,8 @@ export function RecordingDesk({
                   {step.name}
                   <span className="mt-1 block text-sm text-muted-foreground">
                     {catalogById(step.selectedModel)?.label ?? step.selectedModel}
+                    {" · "}
+                    {modelLayerLabel(step.selectedModel)}
                   </span>
                 </p>
                 <p className="text-base">{formatMoney(step.estimatedTotalCents)}</p>

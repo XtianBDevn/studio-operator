@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import Link from "next/link"
 
 import { formatMoney, formatPercentFromBps } from "@/lib/money"
+import { modelLayerLabel } from "@/lib/live-workflows"
 import { PLANNING_RATE_NOTE } from "@/lib/planning-rates"
 import { catalogById } from "@/lib/router-catalog"
 import { SERVICE_TEMPLATES, templateSpendCents } from "@/lib/service-templates"
@@ -74,7 +75,7 @@ export default function TemplatesPage() {
                     </p>
                     <p className="mt-1 font-mono text-xs">{step.modelId}</p>
                     <p className="mt-1 text-muted-foreground">
-                      {entry?.label ?? "Missing from the catalog"} · {step.note}
+                      {entry?.label ?? "Missing from the catalog"} · {modelLayerLabel(step.modelId)} · {step.note}
                     </p>
                   </li>
                 )

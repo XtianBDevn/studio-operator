@@ -1,5 +1,5 @@
 /**
- * Connected workflows from the current Higgsfield catalog.
+ * Layer 3 request builders. Endpoint ids come from `LIVE_SUBMITTABLE_WORKFLOWS`.
  *
  * Image: SOUL V2 — https://docs.higgsfield.ai/docs/models/soul-2/generate.md
  *   POST https://api.higgsfield.ai/higgsfield-ai/soul/v2/standard
@@ -7,9 +7,11 @@
  *   https://docs.higgsfield.ai/docs/models/kling-3/standard-text-to-video.md
  *   POST https://api.higgsfield.ai/kling-video/v3.0/std/text-to-video
  *
- * Voice, editing, and finishing do not have a verified generation endpoint
- * in the pages this desk uses, so live mode does not invent one.
+ * Voice, editing, finishing, and every other routable id are not built here.
+ * Live mode refuses them before a network call.
  */
+
+import { LIVE_SUBMITTABLE_WORKFLOWS } from "@/lib/live-workflows"
 
 export const HIGGSFIELD_DOCS = {
   authentication: "https://docs.higgsfield.ai/docs/authentication.md",
@@ -22,15 +24,15 @@ export const HIGGSFIELD_DOCS = {
 } as const
 
 export const SOUL_V2 = {
-  endpointId: "higgsfield-ai/soul/v2/standard",
-  label: "Higgsfield SOUL V2",
-  kind: "image",
+  endpointId: LIVE_SUBMITTABLE_WORKFLOWS.soul.modelId,
+  label: LIVE_SUBMITTABLE_WORKFLOWS.soul.label,
+  kind: LIVE_SUBMITTABLE_WORKFLOWS.soul.kind,
 } as const
 
 export const KLING_V3_STANDARD = {
-  endpointId: "kling-video/v3.0/std/text-to-video",
-  label: "Kling 3.0 Standard",
-  kind: "video",
+  endpointId: LIVE_SUBMITTABLE_WORKFLOWS.kling.modelId,
+  label: LIVE_SUBMITTABLE_WORKFLOWS.kling.label,
+  kind: LIVE_SUBMITTABLE_WORKFLOWS.kling.kind,
 } as const
 
 export const CONNECTION_TEST_PROMPT = "A plain light-gray square centered on a white background."

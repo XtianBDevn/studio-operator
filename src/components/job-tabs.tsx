@@ -5,6 +5,7 @@ import { decisionLabel } from "@/lib/analysis"
 import { formatDateTime, formatWhen } from "@/lib/format"
 import { formatMoney } from "@/lib/money"
 import { linesFromStored, proposeRoute } from "@/lib/route"
+import { CATALOG_OPERATOR_NOTE, modelLayerLabel } from "@/lib/live-workflows"
 import { catalogByRole, ROUTE_ROLES } from "@/lib/router-catalog"
 import { sourceLabel } from "@/lib/sources"
 import type { JobDetail } from "@/lib/types"
@@ -378,7 +379,7 @@ function CapabilityCatalog() {
     <details className="rounded-lg bg-muted/40 p-3">
       <summary className="cursor-pointer text-sm font-medium">Capability catalog</summary>
       <p className="mt-2 text-xs leading-5 text-muted-foreground">
-        Grouped from the Higgsfield image and video indexes checked for this desk. Seedream, Flux, Veo, Topaz, Speak, lip sync, and caption tools were not on those indexes.
+        Routable model ids, grouped from the Higgsfield image and video indexes checked for this desk. Seedream, Flux, Veo, Topaz, Speak, lip sync, and caption tools were not on those indexes. {CATALOG_OPERATOR_NOTE}
       </p>
       <div className="mt-3 grid gap-3 md:grid-cols-2">
         {ROUTE_ROLES.map((role) => (
@@ -390,7 +391,10 @@ function CapabilityCatalog() {
                   <a className="underline-offset-2 hover:underline" href={model.docsUrl}>
                     {model.label}
                   </a>
-                  <span className="text-muted-foreground"> · {model.capability}</span>
+                  <span className="text-muted-foreground">
+                    {" "}
+                    · {model.capability} · {modelLayerLabel(model.id)}
+                  </span>
                 </li>
               ))}
             </ul>

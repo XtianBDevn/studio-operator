@@ -16,7 +16,7 @@ export function GenerationTimeline({ job, live }: { job: JobDetail; live: boolea
     <div className="space-y-3">
       <p className="text-sm text-muted-foreground">
         {live
-          ? "Live submit is wired for SOUL V2 and Kling 3.0 Standard text-to-video only. Other catalog models are not sent. Voice, editing, and finishing stay local previews."
+          ? "Live mode submits only SOUL V2 and Kling 3.0 Standard text-to-video. Any other route step fails before a provider call. Planning rates are not list prices."
           : "Mock mode is on. These frames are local previews. Higgsfield is not called."}
       </p>
       {job.generations.length === 0 ? (
