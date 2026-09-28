@@ -1,0 +1,17 @@
+{
+  "name": "Studio Operator",
+  "install": "npm ci && npm run setup",
+  "terminals": [
+    {
+      "name": "dev",
+      "command": "npm run dev",
+      "description": "Next.js dev server on http://localhost:3000. Runs setup (ensure .env, prisma generate, migrate deploy, seed) via predev, then next dev. Runs in mock mode; no API keys required."
+    }
+  ],
+  "ports": [
+    {
+      "name": "Next.js dev server",
+      "port": 3000
+    }
+  ]
+}
